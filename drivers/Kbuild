@@ -25,3 +25,4 @@ USERINCLUDE	+= -I$(PLAT_DRV_ROOT)/include/uapi
 
 
 obj-$(CONFIG_QCOM_AOP_SET_DDR)  += aop-set-ddr.o
+obj-$(CONFIG_WALLPOWER_CHARGER) += wallpower_charger.o
