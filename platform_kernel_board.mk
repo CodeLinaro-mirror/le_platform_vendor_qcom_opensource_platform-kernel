@@ -1,0 +1,9 @@
+#SPDX-License-Identifier: GPL-2.0-only
+
+ifeq ($(call is-board-platform-in-list,msmnile), true)
+ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
+    BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
+    BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
+    BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
+endif
+endif

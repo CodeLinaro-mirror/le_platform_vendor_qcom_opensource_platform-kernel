@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+ifeq (y, $(findstring y, $(CONFIG_ARCH_SA8155) $(CONFIG_ARCH_SA8195)))
+  include $(PLAT_DRV_ROOT)/config/augen3soc.conf
+  LINUX_INC += -include $(PLAT_DRV_ROOT)/config/augen3socconf.h
+endif
+
+ifeq (y, $(findstring y, $(CONFIG_ARCH_DIREWOLF) $(CONFIG_ARCH_LEMANS)))
+  include $(PLAT_DRV_ROOT)/config/augen4soc.conf
+  LINUX_INC += -include $(PLAT_DRV_ROOT)/config/augen4socconf.h
+endif
+
+ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+  include $(PLAT_DRV_ROOT)/config/gvmsoc.conf
+  LINUX_INC += -include $(PLAT_DRV_ROOT)/config/gvmsocconf.h
+endif
+
+ccflags-y += $(LINUX_INC)
+
+LINUXINCLUDE	+= \
+		   -I$(PLAT_DRV_ROOT)/include \
+		   -I$(PLAT_DRV_ROOT)/include/linux
+
+USERINCLUDE	+= -I$(PLAT_DRV_ROOT)/include/uapi
+
+
+obj-y  += drivers/
