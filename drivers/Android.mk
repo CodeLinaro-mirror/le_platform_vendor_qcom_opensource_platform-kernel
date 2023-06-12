@@ -2,6 +2,7 @@ AOP_SET_DDR_SELECT := CONFIG_QCOM_AOP_SET_DDR=m
 WALLPOWER_CHARGER_SELECT := CONFIG_WALLPOWER_CHARGER=m
 SILENT_MODE_SELECT := CONFIG_SILENT_MODE=m
 PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
+DUMP_BOOT_LOG_SELECT := CONFIG_DUMP_XBL_LOG=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -117,6 +118,28 @@ LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 ifneq ($(TARGET_BOARD_AUTO),true)
 LOCAL_REQUIRED_MODULES    += silent_mode_select-module-symvers
 LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,silent_mode_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+###########################################################
+KBUILD_OPTIONS += MODNAME=dump_xbl_log
+KBUILD_OPTIONS += $(DUMP_BOOT_LOG_SELECT)
+
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,dump_boot_log_select-module-symvers)/Module.symvers
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := dump_boot_log.ko
+LOCAL_MODULE_KBUILD_NAME  := dump_boot_log.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += dump_boot_log_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,dump_boot_log_select-module-symvers)/Module.symvers
 endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
