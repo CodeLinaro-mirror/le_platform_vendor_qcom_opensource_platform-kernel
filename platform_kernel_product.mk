@@ -6,5 +6,6 @@ ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
     PRODUCT_PACKAGES += wallpower_charger.ko
     PRODUCT_PACKAGES += silent_boot.ko
     PRODUCT_PACKAGES += silent-mode-hw-monitoring.ko
+    PRODUCT_PACKAGES += dump_boot_log.ko
 endif
 endif
