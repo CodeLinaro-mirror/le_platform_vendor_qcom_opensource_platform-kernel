@@ -4,3 +4,4 @@
  */
 
 #define CONFIG_QCOM_AOP_SET_DDR 1
+#define CONFIG_WALLPOWER_CHARGER 1
