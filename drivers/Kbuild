@@ -26,3 +26,5 @@ USERINCLUDE	+= -I$(PLAT_DRV_ROOT)/include/uapi
 
 obj-$(CONFIG_QCOM_AOP_SET_DDR)  += aop-set-ddr.o
 obj-$(CONFIG_WALLPOWER_CHARGER) += wallpower_charger.o
+obj-$(CONFIG_PM_SILENT_MODE)    += silent_boot.o
+obj-$(CONFIG_SILENT_MODE)       += silent-mode-hw-monitoring.o

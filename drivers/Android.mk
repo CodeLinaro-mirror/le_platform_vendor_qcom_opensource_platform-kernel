@@ -1,5 +1,7 @@
 AOP_SET_DDR_SELECT := CONFIG_QCOM_AOP_SET_DDR=m
 WALLPOWER_CHARGER_SELECT := CONFIG_WALLPOWER_CHARGER=m
+SILENT_MODE_SELECT := CONFIG_SILENT_MODE=m
+PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -67,6 +69,54 @@ LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 ifneq ($(TARGET_BOARD_AUTO),true)
 LOCAL_REQUIRED_MODULES    := aop_ddr_select-module-symvers
 LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,aop_ddr_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+###########################################################
+KBUILD_OPTIONS += MODNAME=pm-slient-mode
+KBUILD_OPTIONS += $(PM_SILENT_MODE_SELECT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,pm_silent_mode_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := silent_boot.ko
+LOCAL_MODULE_KBUILD_NAME  := silent_boot.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += pm_silent_mode_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,pm_silent_mode_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+##########################################################
+KBUILD_OPTIONS += MODNAME=silent-mode
+KBUILD_OPTIONS += $(SILENT_MODE_SELECT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,silent_mode_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := silent-mode-hw-monitoring.ko
+LOCAL_MODULE_KBUILD_NAME  := silent-mode-hw-monitoring.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += silent_mode_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,silent_mode_select-module-symvers)/Module.symvers
 endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
