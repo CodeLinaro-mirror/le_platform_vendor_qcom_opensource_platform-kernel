@@ -14,6 +14,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy, $(TARGET_BOARD_PLATFORM)$(TARGET
 else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
+    PRODUCT_PACKAGES += subsystem_notif_virt.ko
 
 endif
 

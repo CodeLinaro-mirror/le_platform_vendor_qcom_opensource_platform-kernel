@@ -4,6 +4,7 @@ SILENT_MODE_SELECT := CONFIG_SILENT_MODE=m
 PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
 DUMP_BOOT_LOG_SELECT := CONFIG_DUMP_XBL_LOG=m
 SOCINFO_DT_SELECT := CONFIG_QCOM_SOCINFO_DT=m
+SUBSYSTEM_NOTIF_VIRT_SELECT := CONFIG_MSM_QUIN_SUBSYSTEM_NOTIF_VIRT=m
 QCOM_ADSP_VOTE_SMP2P_SELECT := CONFIG_QCOM_ADSP_VOTE_SMP2P=m
 
 LOCAL_PATH := $(call my-dir)
@@ -174,6 +175,29 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
+##########################################################
+KBUILD_OPTIONS += MODNAME=virt-ssr
+KBUILD_OPTIONS += $(SUBSYSTEM_NOTIF_VIRT_SELECT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,subsystem_notif_virt_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := subsystem_notif_virt.ko
+LOCAL_MODULE_KBUILD_NAME  := subsystem_notif_virt.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += subsystem_notif_virt_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,subsystem_notif_virt_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
 endif
 
 ###########################################################
