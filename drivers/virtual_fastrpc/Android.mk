@@ -1,13 +1,4 @@
-FASTRPC_DLKM_ENABLED := true
-ifeq ($(TARGET_KERNEL_DLKM_DISABLE), true)
-	ifeq ($(TARGET_KERNEL_DLKM_FASTRPC_OVERRIDE), false)
-		FASTRPC_DLKM_ENABLED := false
-	endif
-endif
-
-ifeq ($(FASTRPC_DLKM_ENABLED), true)
 DLKM_DIR   := device/qcom/common/dlkm
-
 LOCAL_PATH := $(call my-dir)
 
 VRPC_BLD_DIR := $(abspath .)/vendor/qcom/opensource/platform-kernel/virtual_fastrpc
@@ -35,4 +26,3 @@ include $(DLKM_DIR)/Build_external_kernelmodule.mk
 $(info KBUILD_OPTIONS = $(KBUILD_OPTIONS))
 $(info intermediates dsp symvers path = $(call intermediates-dir-for,DLKM,vfastrpc-module-symvers))
 $(info DLKM_DIR = $(DLKM_DIR))
-endif

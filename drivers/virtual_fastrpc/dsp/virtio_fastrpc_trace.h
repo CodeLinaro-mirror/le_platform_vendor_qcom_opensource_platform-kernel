@@ -228,7 +228,7 @@ TRACE_EVENT(fastrpc_internal_invoke_end,
 
 /* This part must be outside protection */
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH ../../../../vendor/qcom/opensource/platform-kernel/virtio_fastrpc/dsp
+#define TRACE_INCLUDE_PATH ../../../vendor/qcom/opensource/platform-kernel/drivers/virtual_fastrpc/dsp
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE virtio_fastrpc_trace
 
