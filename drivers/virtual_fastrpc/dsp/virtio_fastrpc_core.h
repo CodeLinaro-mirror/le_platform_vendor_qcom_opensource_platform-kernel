@@ -11,8 +11,8 @@
 #include <linux/scatterlist.h>
 #include <linux/completion.h>
 #include <linux/wait.h>
-#include "../../../../dsp-kernel/dsp/adsprpc_compat.h"
-#include "../../../../dsp-kernel/dsp/adsprpc_shared.h"
+#include "adsprpc_compat.h"
+#include "adsprpc_shared.h"
 #include "virtio_fastrpc_base.h"
 #if IS_ENABLED(CONFIG_MSM_BOOT_TIME_MARKER)
 #include <soc/qcom/boot_stats.h>

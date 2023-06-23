@@ -1,13 +1,9 @@
-# ported from Android.mk
-$(info within KBUILD file KBUILD_EXTRA_SYMBOLS = $(KBUILD_EXTRA_SYMBOLS))
+# SPDX-License-Identifier: GPL-2.0-only
 
+LINUXINCLUDE += -I$(VRPC_ROOT)/include/uapi/
 vfastrpc-y := dsp/virtio_fastrpc_base.o \
 			  dsp/virtio_fastrpc_core.o \
 			  dsp/virtio_fastrpc_mem.o \
 			  dsp/virtio_fastrpc_queue.o \
-
-vfastrpc-$(CONFIG_COMPAT) += ../../../dsp-kernel/dsp/adsprpc_compat.o \
-
+vfastrpc-$(CONFIG_COMPAT) += dsp/adsprpc_compat.o \
 obj-m := vfastrpc.o
-
-BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/vfastrpc.ko
