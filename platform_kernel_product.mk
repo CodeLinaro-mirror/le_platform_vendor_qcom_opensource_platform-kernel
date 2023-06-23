@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-ifeq ($(call is-board-platform-in-list,msmnile), true)
+ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile), true)
 # Drivers for both Metal and GVM
     PRODUCT_PACKAGES += wallpower_charger.ko
 
@@ -15,5 +15,11 @@ else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
 
+endif
+
+# Drivers for Talos only
+ifeq ($(call is-board-platform-in-list,sm6150), true)
+ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))
+    PRODUCT_PACKAGES += adsp_vote_smp2p.ko
 endif
 endif
