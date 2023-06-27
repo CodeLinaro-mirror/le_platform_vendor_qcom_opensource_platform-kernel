@@ -3,3 +3,8 @@
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#define CONFIG_QCOM_AOP_SET_DDR 1
+#define CONFIG_WALLPOWER_CHARGER 1
+#define CONFIG_SILENT_MODE 1
+#define CONFIG_PM_SILENT_MODE 1
+#define CONFIG_DUMP_XBL_LOG 1

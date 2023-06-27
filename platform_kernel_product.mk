@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile), true)
+ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile gen4), true)
 # Drivers for both Metal and GVM
     PRODUCT_PACKAGES += wallpower_charger.ko
 
-ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
+ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for Metal only
     PRODUCT_PACKAGES += aop-set-ddr.ko
     PRODUCT_PACKAGES += silent_boot.ko

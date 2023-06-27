@@ -1,12 +1,12 @@
 #SPDX-License-Identifier: GPL-2.0-only
 
-ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile), true)
+ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile gen4), true)
 # Drivers for both Metal and GVM
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
 
-ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
+ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for Metal only
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
