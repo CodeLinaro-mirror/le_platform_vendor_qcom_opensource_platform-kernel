@@ -2,3 +2,5 @@
 /*
  * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
+
+#define CONFIG_QCOM_SOCINFO_DT 1

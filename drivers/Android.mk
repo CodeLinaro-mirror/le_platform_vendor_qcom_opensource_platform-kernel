@@ -3,6 +3,7 @@ WALLPOWER_CHARGER_SELECT := CONFIG_WALLPOWER_CHARGER=m
 SILENT_MODE_SELECT := CONFIG_SILENT_MODE=m
 PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
 DUMP_BOOT_LOG_SELECT := CONFIG_DUMP_XBL_LOG=m
+SOCINFO_DT_SELECT := CONFIG_QCOM_SOCINFO_DT=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -140,6 +141,34 @@ LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 ifneq ($(TARGET_BOARD_AUTO),true)
 LOCAL_REQUIRED_MODULES    += dump_boot_log_select-module-symvers
 LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,dump_boot_log_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+endif
+
+# Drivers for LA-GVM only
+###########################################################
+ifneq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
+KBUILD_OPTIONS += MODNAME=qcom-dt-socinfo
+KBUILD_OPTIONS += $(SOCINFO_DT_SELECT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,socinfo_dt_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := socinfo_dt.ko
+LOCAL_MODULE_KBUILD_NAME  := socinfo_dt.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += socinfo_dt_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,socinfo_dt_select-module-symvers)/Module.symvers
 endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
