@@ -50,7 +50,7 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
-ifneq ( ,$(filter sdmsteppe_au msmnile_au, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
+ifneq ( ,$(filter sdmsteppe_au msmnile_au gen4_au, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for only LA-Metal
 ###########################################################
 KBUILD_OPTIONS += MODNAME=aop_set_ddr_freq
@@ -150,7 +150,7 @@ endif
 
 # Drivers for LA-GVM only
 ###########################################################
-ifneq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_gvmq))
+ifneq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 KBUILD_OPTIONS += MODNAME=qcom-dt-socinfo
 KBUILD_OPTIONS += $(SOCINFO_DT_SELECT)
 
