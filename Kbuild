@@ -15,6 +15,11 @@ ifeq ($(CONFIG_QTI_QUIN_GVM), y)
   LINUX_INC += -include $(PLAT_DRV_ROOT)/config/gvmsocconf.h
 endif
 
+ifeq ($(CONFIG_ARCH_SA6155), y)
+  include $(PLAT_DRV_ROOT)/config/sdmsteppesoc.conf
+  LINUX_INC += -include $(PLAT_DRV_ROOT)/config/sdmsteppesocconf.h
+endif
+
 ccflags-y += $(LINUX_INC)
 
 LINUXINCLUDE	+= \

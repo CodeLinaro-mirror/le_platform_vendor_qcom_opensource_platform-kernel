@@ -1,6 +1,6 @@
 #SPDX-License-Identifier: GPL-2.0-only
 
-ifeq ($(call is-board-platform-in-list,msmnile), true)
+ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile), true)
 # Drivers for both Metal and GVM
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
@@ -29,6 +29,15 @@ else
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
+
+endif
+
+# Drivers for Talos only
+ifeq ($(call is-board-platform-in-list,sm6150), true)
+ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))
+    BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/adsp_vote_smp2p.ko
+    BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/adsp_vote_smp2p.ko
+    BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/adsp_vote_smp2p.ko
 
 endif
 endif

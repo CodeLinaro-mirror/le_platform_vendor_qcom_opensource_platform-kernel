@@ -4,6 +4,7 @@ SILENT_MODE_SELECT := CONFIG_SILENT_MODE=m
 PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
 DUMP_BOOT_LOG_SELECT := CONFIG_DUMP_XBL_LOG=m
 SOCINFO_DT_SELECT := CONFIG_QCOM_SOCINFO_DT=m
+QCOM_ADSP_VOTE_SMP2P_SELECT := CONFIG_QCOM_ADSP_VOTE_SMP2P=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -49,9 +50,9 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
+ifneq ( ,$(filter sdmsteppe_au msmnile_au, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for only LA-Metal
 ###########################################################
-ifneq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), msmnile_au))
 KBUILD_OPTIONS += MODNAME=aop_set_ddr_freq
 KBUILD_OPTIONS += $(AOP_SET_DDR_SELECT)
 
@@ -173,6 +174,32 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
+endif
+
+###########################################################
+ifeq ($(call is-board-platform-in-list,sm6150), true)
+KBUILD_OPTIONS += MODNAME=qcom_adsp_vote_smp2p
+KBUILD_OPTIONS += $(QCOM_ADSP_VOTE_SMP2P_SELECT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,qcom_adsp_vote_smp2p_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := adsp_vote_smp2p.ko
+LOCAL_MODULE_KBUILD_NAME  := adsp_vote_smp2p.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += qcom_adsp_vote_smp2p_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,qcom_adsp_vote_smp2p_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
 endif
 
 ###########################################################
