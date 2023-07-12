@@ -17,6 +17,7 @@ else
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
 
 endif
+endif
 
 # Drivers for Talos only
 ifeq ($(call is-board-platform-in-list,sm6150), true)

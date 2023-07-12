@@ -35,6 +35,7 @@ else
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/subsystem_notif_virt.ko
 
 endif
+endif
 
 # Drivers for Talos only
 ifeq ($(call is-board-platform-in-list,sm6150), true)
