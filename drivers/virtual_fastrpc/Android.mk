@@ -1,7 +1,7 @@
 DLKM_DIR := $(TOP)/device/qcom/common/dlkm
 LOCAL_PATH := $(call my-dir)
 
-VRPC_BLD_DIR := $(abspath .)/vendor/qcom/opensource/platform-kernel/virtual_fastrpc
+VRPC_BLD_DIR := $(abspath .)/vendor/qcom/opensource/platform-kernel/drivers/virtual_fastrpc
 
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
