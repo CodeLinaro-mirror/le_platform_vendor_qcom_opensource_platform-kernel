@@ -5,5 +5,7 @@ vfastrpc-y := dsp/virtio_fastrpc_base.o \
 			  dsp/virtio_fastrpc_core.o \
 			  dsp/virtio_fastrpc_mem.o \
 			  dsp/virtio_fastrpc_queue.o \
+
 vfastrpc-$(CONFIG_COMPAT) += dsp/adsprpc_compat.o \
+
 obj-m := vfastrpc.o
