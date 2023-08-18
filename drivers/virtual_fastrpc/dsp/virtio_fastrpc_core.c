@@ -1200,9 +1200,7 @@ int vfastrpc_internal_invoke(struct vfastrpc_file *vfl,
 	struct timespec64 invoket = {0};
 	uint64_t *perf_counter = NULL;
 	bool isasyncinvoke = false;
-	s64 lseq_num = atomic64_fetch_add(1, &vfl->seq_num);
-
-	trace_fastrpc_internal_invoke_start(invoke->handle, invoke->sc, lseq_num);
+	s64 lseq_num = -1;
 
 	VERIFY(err, invoke->handle != FASTRPC_STATIC_HANDLE_KERNEL);
 	if (err) {
@@ -1228,6 +1226,9 @@ int vfastrpc_internal_invoke(struct vfastrpc_file *vfl,
 	if (ctx)
 		goto wait;
 
+	lseq_num = atomic64_fetch_add(1, &vfl->seq_num);
+	trace_fastrpc_internal_invoke_start(invoke->handle, invoke->sc, lseq_num);
+
 	VERIFY(err, 0 == context_alloc(vfl, lseq_num, inv, &ctx));
 	if (err)
 		goto bail;
@@ -1252,19 +1253,20 @@ int vfastrpc_internal_invoke(struct vfastrpc_file *vfl,
 		goto invoke_end;
 wait:
 	interrupted = wait_for_completion_interruptible(&ctx->msg->work);
-	trace_wait_for_completion_end(ctx);
 	VERIFY(err, 0 == (err = interrupted));
 	if (err)
 		goto bail;
+	trace_wait_for_completion_end(ctx);
 	PERF(fl->profile, GET_COUNTER(perf_counter, PERF_PUTARGS),
 	VERIFY(err, 0 == put_args(ctx));
 	PERF_END);
 	if (err)
 		goto bail;
 bail:
-	if (ctx && interrupted == -ERESTARTSYS)
+	if (ctx && interrupted == -ERESTARTSYS) {
+		trace_fastrpc_internal_invoke_interrupted(ctx);
 		context_save_interrupted(ctx);
-	else if (ctx) {
+	} else if (ctx) {
 		if (fl->profile && !interrupted)
 			vfastrpc_update_invoke_count(invoke->handle,
 					perf_counter, &invoket);
@@ -1272,14 +1274,15 @@ bail:
 		if (fl->profile && ctx->perf && ctx->perf_kernel)
 			K_COPY_TO_USER_WITHOUT_ERR(0, ctx->perf_kernel,
 					ctx->perf, M_KERNEL_PERF_LIST*sizeof(uint64_t));
+		lseq_num = ctx->seq_num;
 		context_free(ctx);
+		trace_fastrpc_internal_invoke_end(invoke->handle, invoke->sc, lseq_num);
 	}
 
 invoke_end:
 	if (fl->profile && !interrupted && isasyncinvoke)
 		vfastrpc_update_invoke_count(invoke->handle, perf_counter,
 				&invoket);
-	trace_fastrpc_internal_invoke_end(invoke->handle, invoke->sc, lseq_num);
 	return err;
 }
 
@@ -1787,7 +1790,7 @@ int vfastrpc_internal_mmap(struct vfastrpc_file *vfl,
 		vmmap.fd = -1;
 		vmmap.refcount = 1;
 		vmmap.va = 0;
-		vmmap.attr = 0;
+		vmmap.attr = VFASTRPC_MAP_ATTR_CACHED;
 		vmmap.len = rbuf->size;
 		vmmap.nents = rbuf->sgt.nents;
 		err = virt_fastrpc_mmap(vfl, ud->flags, rbuf->sgt.sgl,
@@ -2317,12 +2320,16 @@ int vfastrpc_internal_init_process(struct vfastrpc_file *vfl,
 	case FASTRPC_INIT_CREATE:
 		fl->pd = DYNAMIC_PD;
 		/* Untrusted apps are not allowed to offload to signedPD on DSP. */
-		if (fl->untrusted_process) {
+		if (fl->untrusted_process || vfl->apps->signed_pd_control) {
 			VERIFY(err, uproc->attrs & FASTRPC_MODE_UNSIGNED_MODULE);
 			if (err) {
 				err = -ECONNREFUSED;
-				dev_err(vfl->apps->dev,
-					"untrusted app trying to offload to signed remote process\n");
+				if (fl->untrusted_process)
+					dev_err(vfl->apps->dev,
+							"untrusted app trying to offload to signed PD\n");
+				else
+					dev_err(vfl->apps->dev,
+							"signed PD is not allowed\n");
 				goto bail;
 			}
 		}

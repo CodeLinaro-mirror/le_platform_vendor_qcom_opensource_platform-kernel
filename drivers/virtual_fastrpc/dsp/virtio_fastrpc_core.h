@@ -14,14 +14,6 @@
 #include "adsprpc_compat.h"
 #include "adsprpc_shared.h"
 #include "virtio_fastrpc_base.h"
-#if IS_ENABLED(CONFIG_MSM_BOOT_TIME_MARKER)
-#include <soc/qcom/boot_stats.h>
-#else
-static inline unsigned long long msm_timer_get_sclk_ticks(void)
-{
-	return 0;
-}
-#endif
 
 #define ADSP_MMAP_HEAP_ADDR		4
 #define ADSP_MMAP_REMOTE_HEAP_ADDR	8
@@ -115,6 +107,11 @@ struct virt_msg_hdr {
 	u16 msgid;	/* unique message id */
 	u32 result;	/* message return value */
 } __packed;
+
+static inline unsigned long long msm_hr_timer_get_sclk_ticks(void)
+{
+	return 0;
+}
 
 struct vfastrpc_file *vfastrpc_file_alloc(void);
 int vfastrpc_file_free(struct vfastrpc_file *vfl);
