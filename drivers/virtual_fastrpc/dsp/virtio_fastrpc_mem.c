@@ -122,18 +122,16 @@ void vfastrpc_buf_free(struct vfastrpc_buf *buf, int cache)
 		}
 		hlist_add_head(&buf->hn, &fl->cached_bufs);
 		fl->num_cached_buf++;
-		dev_dbg(vfl->apps->dev, "%d buf is cached, size = 0x%lx",
-				fl->num_cached_buf, buf->size);
+		buf->type = -1;
 		spin_unlock(&fl->hlock);
 		return;
 	}
 
 skip_buf_cache:
-	if (buf->remote) {
+	if (buf->type == VFASTRPC_BUF_TYPE_USERHEAP) {
 		spin_lock(&fl->hlock);
 		hlist_del_init(&buf->hn_rem);
 		spin_unlock(&fl->hlock);
-		buf->remote = 0;
 		buf->raddr = 0;
 	}
 
@@ -144,7 +142,7 @@ skip_buf_cache:
 
 int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				unsigned long dma_attr, uint32_t rflags,
-				int remote, pgprot_t prot, struct vfastrpc_buf **obuf)
+				int buf_type, pgprot_t prot, struct vfastrpc_buf **obuf)
 {
 	struct vfastrpc_apps *me = vfl->apps;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -159,7 +157,7 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 		goto bail;
 	}
 
-	if (!remote) {
+	if (buf_type != VFASTRPC_BUF_TYPE_USERHEAP) {
 		/* find the smallest buffer that fits in the cache */
 		spin_lock(&fl->hlock);
 		hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
@@ -186,8 +184,8 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 	buf->dma_attr = dma_attr;
 	buf->map_attr = 0;
 	buf->flags = rflags;
+	buf->type = buf_type;
 	buf->raddr = 0;
-	buf->remote = 0;
 	buf->pages = vfastrpc_alloc_buffer(me->dev, buf, GFP_KERNEL, prot);
 	if (IS_ERR_OR_NULL(buf->pages)) {
 		err = -ENOMEM;
@@ -197,12 +195,11 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 		goto bail;
 	}
 
-	if (remote) {
+	if (buf_type == VFASTRPC_BUF_TYPE_USERHEAP) {
 		INIT_HLIST_NODE(&buf->hn_rem);
 		spin_lock(&fl->hlock);
 		hlist_add_head(&buf->hn_rem, &fl->remote_bufs);
 		spin_unlock(&fl->hlock);
-		buf->remote = remote;
 	}
 
 	*obuf = buf;
@@ -377,6 +374,7 @@ int vfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd,
 	int err = 0, sgl_index = 0;
 	struct scatterlist *sgl = NULL;
 
+	ADSP_LOG("fd=%d,va=%lx,len=%ld\n", fd, va, len);
 	if (!vfastrpc_mmap_find(vfl, fd, va, len, mflags, 1, ppmap))
 		return 0;
 

@@ -9,7 +9,7 @@
 
 #include <linux/dma-buf.h>
 #include <linux/types.h>
-#include "virtio_fastrpc_core.h"
+#include "fastrpc_common.h"
 
 struct vfastrpc_mmap {
 	struct hlist_node hn;
@@ -25,6 +25,7 @@ struct vfastrpc_mmap {
 	size_t len;
 	uintptr_t raddr;
 	int refs;
+	bool is_persistent;
 	/*
 	 * Used to store attributes of the fastrpc_mmap when it's created,
 	 * such as FASTRPC_ATTR_KEEP_MAP.
@@ -49,10 +50,13 @@ struct vfastrpc_buf {
 	u32 map_attr;
 	uintptr_t raddr;
 	uint32_t flags;
-	int remote;
+	int type;
 };
 
 enum vfastrpc_buf_type {
+	VFASTRPC_BUF_TYPE_METADATA,
+	VFASTRPC_BUF_TYPE_COPYDATA,
+	VFASTRPC_BUF_TYPE_USERHEAP,
 	VFASTRPC_BUF_TYPE_NORMAL,
 	VFASTRPC_BUF_TYPE_ION,
 	VFASTRPC_BUF_TYPE_INTERNAL,
@@ -83,7 +87,7 @@ void vfastrpc_mmap_add(struct vfastrpc_file *vfl, struct vfastrpc_mmap *map);
 
 int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				unsigned long dma_attr, uint32_t rflags,
-				int remote, pgprot_t prot, struct vfastrpc_buf **obuf);
+				int type, pgprot_t prot, struct vfastrpc_buf **obuf);
 
 void vfastrpc_buf_free(struct vfastrpc_buf *buf, int cache);
 #endif /*__VIRTIO_FASTRPC_MEM_H__*/
