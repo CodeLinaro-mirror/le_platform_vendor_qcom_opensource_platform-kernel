@@ -22,6 +22,7 @@ struct vfastrpc_mmap {
 	uint64_t phys;
 	size_t size;
 	uintptr_t va;
+	uint64_t da;
 	size_t len;
 	uintptr_t raddr;
 	int refs;
@@ -42,6 +43,7 @@ struct vfastrpc_buf {
 	struct sg_table sgt;
 	struct page **pages;
 	void *va;
+	uint64_t da;
 	unsigned long dma_attr;
 	/*
 	 * Indicate cacheability of the map, set to 0 for uncached buf,
@@ -90,4 +92,14 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				int type, pgprot_t prot, struct vfastrpc_buf **obuf);
 
 void vfastrpc_buf_free(struct vfastrpc_buf *buf, int cache);
+
+int hfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd, unsigned int attr,
+	uintptr_t va, size_t len, int mflags, struct vfastrpc_mmap **ppmap);
+void hfastrpc_mmap_free(struct vfastrpc_file *vfl,
+		struct vfastrpc_mmap *map, uint32_t force_free);
+int hfastrpc_mmap_remove_fd(struct vfastrpc_file *vfl, int fd);
+int hfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
+				unsigned long dma_attr, uint32_t rflags,
+				int type, pgprot_t prot, struct vfastrpc_buf **obuf);
+void hfastrpc_buf_free(struct vfastrpc_buf *buf, int cache);
 #endif /*__VIRTIO_FASTRPC_MEM_H__*/
