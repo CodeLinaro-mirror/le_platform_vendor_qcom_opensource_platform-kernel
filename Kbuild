@@ -5,7 +5,7 @@ ifeq (y, $(findstring y, $(CONFIG_ARCH_SA8155) $(CONFIG_ARCH_SA8195)))
   LINUX_INC += -include $(PLAT_DRV_ROOT)/config/augen3socconf.h
 endif
 
-ifeq (y, $(findstring y, $(CONFIG_ARCH_DIREWOLF) $(CONFIG_ARCH_LEMANS)))
+ifeq (y, $(findstring y, $(CONFIG_ARCH_DIREWOLF) $(CONFIG_ARCH_LEMANS) $(CONFIG_ARCH_MONACO_AUTO)))
   include $(PLAT_DRV_ROOT)/config/augen4soc.conf
   LINUX_INC += -include $(PLAT_DRV_ROOT)/config/augen4socconf.h
 endif

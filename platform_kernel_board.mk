@@ -34,6 +34,9 @@ else
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/subsystem_notif_virt.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/subsystem_notif_virt.ko
 
+ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
+    BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/vfastrpc.ko
+endif
 endif
 endif
 

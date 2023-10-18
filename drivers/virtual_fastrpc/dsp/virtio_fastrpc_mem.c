@@ -9,8 +9,9 @@
 #define MAX_CACHE_BUF_SIZE		(8*1024*1024)
 /* Maximum buffers cached in cached buffer list */
 #define MAX_CACHED_BUFS		32
+#define MAX_BUF_SIZE	0x78000000
 
-static inline void vfastrpc_free_pages(struct page **pages, int count)
+static inline void vfastrpc_free_pages(struct page **pages, unsigned int count)
 {
 	while (count--)
 		__free_page(pages[count]);
@@ -121,18 +122,16 @@ void vfastrpc_buf_free(struct vfastrpc_buf *buf, int cache)
 		}
 		hlist_add_head(&buf->hn, &fl->cached_bufs);
 		fl->num_cached_buf++;
-		dev_dbg(vfl->apps->dev, "%d buf is cached, size = 0x%lx",
-				fl->num_cached_buf, buf->size);
+		buf->type = -1;
 		spin_unlock(&fl->hlock);
 		return;
 	}
 
 skip_buf_cache:
-	if (buf->remote) {
+	if (buf->type == VFASTRPC_BUF_TYPE_USERHEAP) {
 		spin_lock(&fl->hlock);
 		hlist_del_init(&buf->hn_rem);
 		spin_unlock(&fl->hlock);
-		buf->remote = 0;
 		buf->raddr = 0;
 	}
 
@@ -143,7 +142,7 @@ skip_buf_cache:
 
 int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				unsigned long dma_attr, uint32_t rflags,
-				int remote, pgprot_t prot, struct vfastrpc_buf **obuf)
+				int buf_type, pgprot_t prot, struct vfastrpc_buf **obuf)
 {
 	struct vfastrpc_apps *me = vfl->apps;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -151,11 +150,14 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 	struct hlist_node *n;
 	int err = 0;
 
-	VERIFY(err, size > 0);
-	if (err)
+	VERIFY(err, size > 0 && size < MAX_BUF_SIZE);
+	if (err) {
+		dev_err(me->dev, "%s: Invalid buffer size, 0x%llx\n",
+				__func__, size);
 		goto bail;
+	}
 
-	if (!remote) {
+	if (buf_type != VFASTRPC_BUF_TYPE_USERHEAP) {
 		/* find the smallest buffer that fits in the cache */
 		spin_lock(&fl->hlock);
 		hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
@@ -182,23 +184,22 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 	buf->dma_attr = dma_attr;
 	buf->map_attr = 0;
 	buf->flags = rflags;
+	buf->type = buf_type;
 	buf->raddr = 0;
-	buf->remote = 0;
 	buf->pages = vfastrpc_alloc_buffer(me->dev, buf, GFP_KERNEL, prot);
 	if (IS_ERR_OR_NULL(buf->pages)) {
 		err = -ENOMEM;
 		dev_err(me->dev,
-			"%s: %s: fastrpc_alloc_buffer failed for size 0x%zx, returned %ld\n",
+			"%s: %s: failed for size 0x%zx, returned %ld\n",
 			current->comm, __func__, size, PTR_ERR(buf->pages));
 		goto bail;
 	}
 
-	if (remote) {
+	if (buf_type == VFASTRPC_BUF_TYPE_USERHEAP) {
 		INIT_HLIST_NODE(&buf->hn_rem);
 		spin_lock(&fl->hlock);
 		hlist_add_head(&buf->hn_rem, &fl->remote_bufs);
 		spin_unlock(&fl->hlock);
-		buf->remote = remote;
 	}
 
 	*obuf = buf;
@@ -373,6 +374,7 @@ int vfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd,
 	int err = 0, sgl_index = 0;
 	struct scatterlist *sgl = NULL;
 
+	ADSP_LOG("fd=%d,va=%lx,len=%ld\n", fd, va, len);
 	if (!vfastrpc_mmap_find(vfl, fd, va, len, mflags, 1, ppmap))
 		return 0;
 

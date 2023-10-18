@@ -15,7 +15,9 @@ else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
-
+ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
+    PRODUCT_PACKAGES += vfastrpc.ko
+endif
 endif
 endif
 

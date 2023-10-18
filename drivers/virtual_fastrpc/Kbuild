@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-LINUXINCLUDE += -I$(VRPC_ROOT)/include/uapi/
-vfastrpc-y := dsp/virtio_fastrpc_base.o \
-			  dsp/virtio_fastrpc_core.o \
-			  dsp/virtio_fastrpc_mem.o \
-			  dsp/virtio_fastrpc_queue.o \
-vfastrpc-$(CONFIG_COMPAT) += dsp/adsprpc_compat.o \
-obj-m := vfastrpc.o
+LINUXINCLUDE += \
+		-I$(VRPC_ROOT)/include/uapi/
+
+obj-$(CONFIG_VIRTIO_FASTRPC) += vfastrpc.o
+vfastrpc-objs := dsp/virtio_fastrpc_base.o \
+		 dsp/virtio_fastrpc_core.o \
+		 dsp/virtio_fastrpc_mem.o \
+		 dsp/virtio_fastrpc_queue.o \
+		 dsp/fastrpc_ioctl.o \
+		 dsp/fastrpc_common.o
+
+ifeq ($(CONFIG_COMPAT), y)
+	vfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
+endif
