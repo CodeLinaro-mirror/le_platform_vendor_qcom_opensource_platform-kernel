@@ -20,7 +20,6 @@
 #define FASTRPC_MSG_MAX	256
 
 #define CDSP1_DOMAIN_ID	4
-#define SESSION_ID_INDEX (30)
 
 struct vfastrpc_channel_ctx {
 	int secure;
