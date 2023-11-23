@@ -27,7 +27,7 @@ int virt_fastrpc_close(struct vfastrpc_file *vfl)
 	}
 
 	vmsg = (struct virt_msg_hdr *)msg->txbuf;
-	vmsg->pid = fl->tgid;
+	vmsg->pid = fl->tgid_frpc;
 	vmsg->tid = current->pid;
 	vmsg->cid = fl->cid;
 	vmsg->cmd = VIRTIO_FASTRPC_CMD_CLOSE;
@@ -145,7 +145,7 @@ int virt_fastrpc_get_dsp_info(struct vfastrpc_file *vfl,
 	}
 
 	vmsg = (struct virt_cap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = -1;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_GET_DSP_INFO;
