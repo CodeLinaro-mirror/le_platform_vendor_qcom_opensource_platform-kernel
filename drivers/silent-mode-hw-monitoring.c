@@ -128,8 +128,8 @@ static int silent_mode_enable_monitor(struct silent_mode_info *info)
 {
 	int result = 0;
 
-	dev_info(&info->pdev->dev, "silent_mode:%s\n", __func__);
 	if (info != NULL) {
+		dev_info(&info->pdev->dev, "silent_mode:%s\n", __func__);
 		result = gpio_get_value(info->sgpio);
 		if (result != 0)
 			enable_irq(info->sirq);
@@ -141,10 +141,10 @@ static int silent_mode_enable_monitor(struct silent_mode_info *info)
 
 static int silent_mode_disable_monitor(struct silent_mode_info *info)
 {
-	dev_info(&info->pdev->dev, "silent_mode:%s\n", __func__);
-	if (info != NULL)
+	if (info != NULL) {
+		dev_info(&info->pdev->dev, "silent_mode:%s\n", __func__);
 		disable_irq(info->sirq);
-
+	}
 	return 0;
 }
 
