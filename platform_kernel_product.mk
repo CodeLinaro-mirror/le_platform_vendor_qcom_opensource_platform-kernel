@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-
+ifneq ($(TARGET_USES_GY), true)
 ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile gen4), true)
 # Drivers for both Metal and GVM
     PRODUCT_PACKAGES += wallpower_charger.ko
@@ -26,5 +26,6 @@ endif
 ifeq ($(call is-board-platform-in-list,sm6150), true)
 ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))
     PRODUCT_PACKAGES += adsp_vote_smp2p.ko
+endif
 endif
 endif
