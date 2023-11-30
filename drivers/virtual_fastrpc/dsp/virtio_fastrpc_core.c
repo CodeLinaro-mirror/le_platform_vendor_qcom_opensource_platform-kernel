@@ -52,6 +52,11 @@ struct virt_fastrpc_cmd {
 	u32 cmd;	/* cmd type */
 };
 
+struct virt_fastrpc_sgtable {
+	u32 nents;
+	struct virt_fastrpc_sgl sgl[0];
+} __packed;
+
 struct virt_fastrpc_mapping {
 	s32 fd;
 	s32 refcount;
@@ -146,6 +151,14 @@ static inline int64_t getnstimediff(struct timespec64 *start)
 	b = timespec64_sub(ts, *start);
 	ns = timespec64_to_ns(&b);
 	return ns;
+}
+
+static inline size_t get_size_of_mapping(struct vfastrpc_mmap *map)
+{
+	if (map->attr & VFASTRPC_MAP_ATTR_FOUND_MAP)
+		return SIZE_OF_MAPPING(0);
+	else
+		return SIZE_OF_MAPPING(map->table->nents);
 }
 
 static void context_list_ctor(struct fastrpc_ctx_lst *me)
@@ -615,7 +628,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			mutex_unlock(&fl->map_mutex);
 			if (err)
 				goto bail;
-			len = SIZE_OF_MAPPING(maps[i]->table->nents);
+			len = get_size_of_mapping(maps[i]);
 		}
 		copylen += len;
 		if (i < inbufs)
@@ -669,7 +682,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			size_t len = lpra[i].buf.len;
 
 			if (maps[i]) {
-				len = SIZE_OF_MAPPING(maps[i]->table->nents);
+				len = get_size_of_mapping(maps[i]);
 				ctx->desc[i].type = VFASTRPC_BUF_TYPE_ION;
 			} else if (len < PAGE_SIZE) {
 				ctx->desc[i].type = VFASTRPC_BUF_TYPE_NORMAL;
@@ -758,20 +771,24 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 				goto bail;
 			}
 			rpra[i].offset = offset;
-			rpra[i].payload_len = SIZE_OF_MAPPING(table->nents);
+			rpra[i].payload_len = get_size_of_mapping(maps[i]);
 
 			vmmap = (struct virt_fastrpc_mapping *)payload;
 			vmmap->fd = maps[i]->fd;
 			vmmap->refcount = maps[i]->refs;
 			vmmap->va = maps[i]->va;
-			vmmap->len = maps[i]->len;
+			vmmap->len = maps[i]->size;
 			vmmap->attr = VFASTRPC_MAP_ATTR_CACHED;
-			vmmap->nents = table->nents;
 
-			sgbuf = (struct virt_fastrpc_sgl *)vmmap->sgl;
-			for_each_sg(table->sgl, sgl, table->nents, index) {
-				sgbuf[index].pv = sg_dma_address(sgl);
-				sgbuf[index].len = sg_dma_len(sgl);
+			if ((maps[i]->attr & VFASTRPC_MAP_ATTR_FOUND_MAP)) {
+				vmmap->nents = 0;
+			} else {
+				vmmap->nents = table->nents;
+				sgbuf = (struct virt_fastrpc_sgl *)vmmap->sgl;
+				for_each_sg(table->sgl, sgl, table->nents, index) {
+					sgbuf[index].pv = sg_dma_address(sgl);
+					sgbuf[index].len = sg_dma_len(sgl);
+				}
 			}
 
 			calc_compare_crc(ctx, (uint8_t *)payload, (int)rpra[i].payload_len,
@@ -1620,18 +1637,49 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	struct vfastrpc_apps *me = vfl->apps;
 	struct virt_mem_map_msg *vmsg, *rsp = NULL;
-	struct virt_fastrpc_msg *msg;
+	struct virt_fastrpc_msg *msg = NULL;
 	struct virt_fastrpc_sgl *sgbuf;
 	int err, sgbuf_size, total_size;
 	struct scatterlist *sgl = NULL;
 	int sgl_index = 0;
-
+	u32 new_nents = 0;
+	struct scatterlist *new_table = NULL;
+	struct virt_fastrpc_sgtable *intmap = NULL;
+	struct vfastrpc_buf * int_buf = NULL;
 	sgbuf_size = vmmap->nents * sizeof(*sgbuf);
+	total_size = sizeof(*vmsg) + sgbuf_size;
+
+	if (total_size > me->buf_size) {
+		vmmap->attr |= VFASTRPC_MAP_ATTR_INTERNAL_MAP;
+		err = vfastrpc_buf_alloc(vfl, PAGE_ALIGN(sizeof(*intmap) + sgbuf_size), 0, 0,
+			VFASTRPC_BUF_TYPE_INTERNAL, PAGE_KERNEL, &int_buf);
+		if (err)
+			goto bail;
+
+		intmap = int_buf->va;
+		intmap->nents = vmmap->nents;
+		sgbuf = intmap->sgl;
+
+		for_each_sg(table, sgl, vmmap->nents, sgl_index) {
+			sgbuf[sgl_index].pv = sg_dma_address(sgl);
+			sgbuf[sgl_index].len = sg_dma_len(sgl);
+		}
+
+		new_table = int_buf->sgt.sgl;
+		new_nents = int_buf->sgt.nents;
+		sgbuf_size = new_nents * sizeof(*sgbuf);
+
+		sgl_index = 0;
+	}
+
 	total_size = sizeof(*vmsg) + sgbuf_size;
 
 	msg = virt_alloc_msg(vfl, total_size);
 	if (!msg)
-		return -ENOMEM;
+	{
+		err = -ENOMEM;
+		goto bail;
+	}
 
 	vmsg = (struct virt_mem_map_msg *)msg->txbuf;
 	vmsg->hdr.pid = fl->tgid_frpc;
@@ -1648,9 +1696,17 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 	memcpy(&vmsg->mmap, vmmap, sizeof(*vmmap));
 	sgbuf = vmsg->mmap.sgl;
 
-	for_each_sg(table, sgl, vmmap->nents, sgl_index) {
-		sgbuf[sgl_index].pv = sg_dma_address(sgl);
-		sgbuf[sgl_index].len = sg_dma_len(sgl);
+	if (vmmap->attr & VFASTRPC_MAP_ATTR_INTERNAL_MAP) {
+		vmsg->mmap.nents = new_nents;
+		for_each_sg(new_table, sgl, new_nents, sgl_index) {
+			sgbuf[sgl_index].pv = page_to_phys(sg_page(sgl));
+			sgbuf[sgl_index].len = sgl->length;
+		}
+	} else {
+		for_each_sg(table, sgl, vmmap->nents, sgl_index) {
+			sgbuf[sgl_index].pv = sg_dma_address(sgl);
+			sgbuf[sgl_index].len = sg_dma_len(sgl);
+		}
 	}
 
 	err = vfastrpc_txbuf_send(vfl, vmsg, total_size);
@@ -1670,7 +1726,13 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 bail:
 	if (rsp)
 		vfastrpc_rxbuf_send(vfl, rsp, me->buf_size);
-	virt_free_msg(vfl, msg);
+
+	if (int_buf) {
+		vfastrpc_buf_free(int_buf, 0);
+	}
+
+	if (msg)
+		virt_free_msg(vfl, msg);
 	return err;
 }
 

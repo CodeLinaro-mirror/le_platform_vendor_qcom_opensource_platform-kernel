@@ -396,7 +396,10 @@ int vfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd,
 
 	ADSP_LOG("fd=%d,va=%lx,len=%ld\n", fd, va, len);
 	if (!vfastrpc_mmap_find(vfl, fd, va, len, mflags, 1, ppmap))
+	{
+		(*ppmap)->attr |= VFASTRPC_MAP_ATTR_FOUND_MAP;
 		return 0;
+	}
 
 	map = kzalloc(sizeof(*map), GFP_KERNEL);
 	VERIFY(err, !IS_ERR_OR_NULL(map));
