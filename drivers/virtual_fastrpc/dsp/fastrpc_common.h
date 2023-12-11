@@ -99,7 +99,7 @@
 #define VFASTRPC_MAP_ATTR_INTERNAL_MAP  (1U << 1) /* 1: nested sglist, 0: plain sglist */
 
 /* Fastrpc attribute  for already mapped buffer */
-#define VFASTRPC_MAP_ATTR_FOUND_MAP (128)
+#define VFASTRPC_MAP_ATTR_BUFFER_MAPPED (128)
 
 /* Use the second definition to enable additional dspsignal debug logging */
 #define DSPSIGNAL_VERBOSE(x, ...)

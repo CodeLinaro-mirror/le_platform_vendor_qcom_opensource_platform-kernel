@@ -155,7 +155,7 @@ static inline int64_t getnstimediff(struct timespec64 *start)
 
 static inline size_t get_size_of_mapping(struct vfastrpc_mmap *map)
 {
-	if (map->attr & VFASTRPC_MAP_ATTR_FOUND_MAP)
+	if (map->attr & VFASTRPC_MAP_ATTR_BUFFER_MAPPED)
 		return SIZE_OF_MAPPING(0);
 	else
 		return SIZE_OF_MAPPING(map->table->nents);
@@ -780,7 +780,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			vmmap->len = maps[i]->size;
 			vmmap->attr = VFASTRPC_MAP_ATTR_CACHED;
 
-			if ((maps[i]->attr & VFASTRPC_MAP_ATTR_FOUND_MAP)) {
+			if ((maps[i]->attr & VFASTRPC_MAP_ATTR_BUFFER_MAPPED)) {
 				vmmap->nents = 0;
 			} else {
 				vmmap->nents = table->nents;
@@ -1778,6 +1778,7 @@ static int vfastrpc_internal_mem_map(struct vfastrpc_file *vfl,
 	if (err)
 		goto bail;
 	ud->m.vaddrout = map->raddr;
+	map->attr |= VFASTRPC_MAP_ATTR_BUFFER_MAPPED;
 bail:
 	if (err) {
 		dev_err(me->dev, "%s failed to map fd %d flags %d err %d\n",
