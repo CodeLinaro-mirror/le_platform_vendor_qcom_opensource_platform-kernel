@@ -283,6 +283,12 @@ struct virt_fastrpc_sgl {
 	u64 len;	/* buffer length */
 };
 
+struct virt_fastrpc_sgtable {
+	u32 nents;
+	struct virt_fastrpc_sgl sgl[0];
+} __packed;
+
+
 struct virt_cap_msg {
 	struct virt_msg_hdr hdr;	/* virtio fastrpc message header */
 	u32 domain;		/* DSP domain id */

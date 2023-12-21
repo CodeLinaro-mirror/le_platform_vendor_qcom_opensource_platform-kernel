@@ -46,11 +46,6 @@ struct virt_fastrpc_cmd {
 	u32 cmd;	/* cmd type */
 };
 
-struct virt_fastrpc_sgtable {
-	u32 nents;
-	struct virt_fastrpc_sgl sgl[0];
-} __packed;
-
 struct virt_fastrpc_mapping {
 	s32 fd;
 	s32 refcount;
