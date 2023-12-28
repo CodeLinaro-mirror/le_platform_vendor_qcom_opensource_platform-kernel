@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ion.h>
@@ -1626,6 +1626,8 @@ static int vfastrpc_internal_mmap(struct vfastrpc_file *vfl,
 		vfastrpc_mmap_free(vfl, map, 0);
 		mutex_unlock(&fl->map_mutex);
 	}
+	if (err && rbuf)
+		vfastrpc_buf_free(rbuf, 0);
 	mutex_unlock(&fl->internal_map_mutex);
 	return err;
 }
