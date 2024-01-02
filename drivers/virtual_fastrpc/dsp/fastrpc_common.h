@@ -29,7 +29,6 @@
 #define FASTRPC_MSG_MAX			256
 
 #define CDSP1_DOMAIN_ID			4
-#define SESSION_ID_INDEX		30
 
 #define UNSIGNED_PD_SUPPORT		1
 #define PERF_CAPABILITY_SUPPORT		(1 << 1)
@@ -95,6 +94,12 @@
 
 /* set for cached mapping */
 #define VFASTRPC_MAP_ATTR_CACHED	1
+
+/* set for internal nested mapping */
+#define VFASTRPC_MAP_ATTR_INTERNAL_MAP  (1U << 1) /* 1: nested sglist, 0: plain sglist */
+
+/* Fastrpc attribute  for already mapped buffer */
+#define VFASTRPC_MAP_ATTR_BUFFER_MAPPED (128)
 
 /* Use the second definition to enable additional dspsignal debug logging */
 #define DSPSIGNAL_VERBOSE(x, ...)
@@ -339,6 +344,8 @@ struct vfastrpc_apps {
 	const struct file_operations *debugfs_fops;
 	spinlock_t msglock;
 	struct virt_fastrpc_msg *msgtable[FASTRPC_MSG_MAX];
+	uint32_t max_sess_per_proc;
+	spinlock_t hlock;
 };
 
 int virt_fastrpc_close(struct vfastrpc_file *vfl);
