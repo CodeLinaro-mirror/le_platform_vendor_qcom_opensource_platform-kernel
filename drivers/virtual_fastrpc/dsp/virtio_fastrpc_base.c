@@ -57,7 +57,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x5
+#define FE_MINOR_VER 0x9
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -99,6 +99,12 @@ static ssize_t vfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 				"\n%s %d %s %d\n", "channel =", vfl->domain,
 				"proc_attr =", vfl->procattrs);
 
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"\n========%s %s %s========\n", title,
+			" SESSION INFO ", title);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d %s %d\n", "tgid_frpc =", fl->tgid_frpc,
+				"sessionid =", fl->sessionid);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
 			" LIST OF BUFS ", title);
@@ -375,6 +381,7 @@ static int vfastrpc_channel_init(struct vfastrpc_apps *me)
 
 	me->channel = kcalloc(me->num_channels,
 			sizeof(struct vfastrpc_channel_ctx), GFP_KERNEL);
+	me->max_sess_per_proc = DEFAULT_MAX_SESS_PER_PROC;
 	if (!me->channel)
 		return -ENOMEM;
 	for (i = 0; i < me->num_channels; i++) {
@@ -386,6 +393,7 @@ static int vfastrpc_channel_init(struct vfastrpc_apps *me)
 			me->channel[i].secure = true;
 			me->channel[i].unsigned_support = false;
 		}
+		me->channel[i].sesscount = 0;
 	}
 	return 0;
 }
@@ -421,6 +429,7 @@ static int virt_fastrpc_probe(struct virtio_device *vdev)
 
 	memset(me, 0, sizeof(*me));
 	spin_lock_init(&me->msglock);
+	spin_lock_init(&me->hlock);
 
 	if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_INVOKE_ATTR))
 		me->has_invoke_attr = true;
