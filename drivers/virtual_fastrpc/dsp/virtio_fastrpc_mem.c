@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "virtio_fastrpc_mem.h"
@@ -483,7 +483,7 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 		return -ENOMEM;
 
 	vmsg = (struct virt_smmu_map_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_SMMU_MAP;
@@ -547,7 +547,7 @@ static int virt_smmu_unmap(struct vfastrpc_file *vfl, uint64_t da)
 		return -ENOMEM;
 
 	vmsg = (struct virt_smmu_unmap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_SMMU_UNMAP;
