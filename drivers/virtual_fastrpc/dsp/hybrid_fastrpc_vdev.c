@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -88,7 +88,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x0
+#define FE_MINOR_VER 0x1
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -165,6 +165,14 @@ static ssize_t hfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"\n%s %d %s %d\n", "channel =", vfl->domain,
 				"proc_attr =", vfl->procattrs);
+
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"\n========%s %s %s========\n", title,
+			" SESSION INFO ", title);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d %s %d %s 0x%lx\n", "tgid_frpc =",
+				fl->tgid_frpc, "sessionid =", fl->sessionid,
+				"upid =", vfl->upid);
 
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
@@ -271,9 +279,9 @@ static int hfastrpc_open(struct inode *inode, struct file *filp)
 	vfl->apps = me;
 	fl->apps = &fa;
 
-	spin_lock_irqsave(&fa.hlock, irq_flags);
-	hlist_add_head(&fl->hn, &fa.drivers);
-	spin_unlock_irqrestore(&fa.hlock, irq_flags);
+	spin_lock_irqsave(&me->hlock, irq_flags);
+	hlist_add_head(&fl->hn, &me->drivers);
+	spin_unlock_irqrestore(&me->hlock, irq_flags);
 
 	filp->private_data = fl;
 	return 0;
@@ -804,6 +812,9 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 
 	memset(me, 0, sizeof(*me));
 	spin_lock_init(&me->msglock);
+	spin_lock_init(&me->hlock);
+	INIT_HLIST_HEAD(&me->drivers);
+	me->max_sess_per_proc = DEFAULT_MAX_SESS_PER_PROC;
 
 	vdev->priv = me;
 	me->vdev = vdev;
