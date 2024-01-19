@@ -19,6 +19,9 @@ else
 ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
     PRODUCT_PACKAGES += vfastrpc.ko
 endif
+ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
+    PRODUCT_PACKAGES += hfastrpc.ko
+endif
 endif
 endif
 
