@@ -405,9 +405,6 @@ int vfastrpc_file_free(struct vfastrpc_file *vfl)
 	spin_lock_irqsave(&fl->aqlock, flags);
 	atomic_add(1, &fl->async_queue_job_count);
 	wake_up_interruptible(&fl->async_wait_queue);
-	/* Reset the tgid usage to false */
-	if (fl->tgid_frpc != -1)
-		frpc_tgid_usage_array[fl->tgid_frpc] = false;
 	spin_unlock_irqrestore(&fl->aqlock, flags);
 
 	vfastrpc_context_list_dtor(vfl);
@@ -427,6 +424,12 @@ int vfastrpc_file_free(struct vfastrpc_file *vfl)
 		vfastrpc_mmap_free(vfl, lmap, 1);
 	} while (lmap);
 	mutex_unlock(&fl->map_mutex);
+
+	spin_lock_irqsave(&vfl->apps->hlock, flags);
+	/* Reset the tgid usage to false */
+	if (fl->tgid_frpc != -1)
+		frpc_tgid_usage_array[fl->tgid_frpc] = false;
+	spin_unlock_irqrestore(&vfl->apps->hlock, flags);
 
 	mutex_destroy(&fl->map_mutex);
 	mutex_destroy(&fl->internal_map_mutex);
@@ -777,7 +780,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			vmmap->fd = maps[i]->fd;
 			vmmap->refcount = maps[i]->refs;
 			vmmap->va = maps[i]->va;
-			vmmap->len = maps[i]->size;
+			vmmap->len = maps[i]->len;
 			vmmap->attr = VFASTRPC_MAP_ATTR_CACHED;
 
 			if ((maps[i]->attr & VFASTRPC_MAP_ATTR_BUFFER_MAPPED)) {
@@ -1770,7 +1773,7 @@ static int vfastrpc_internal_mem_map(struct vfastrpc_file *vfl,
 	vmmap.fd = map->fd;
 	vmmap.refcount = map->refs;
 	vmmap.va = map->va;
-	vmmap.len = map->size;
+	vmmap.len = map->len;
 	vmmap.attr = VFASTRPC_MAP_ATTR_CACHED;
 	vmmap.nents = map->table->nents;
 	err = virt_fastrpc_mem_map(vfl, ud->m.offset, ud->m.flags, ud->m.attrs,
@@ -1793,7 +1796,7 @@ bail:
 	return err;
 }
 
-static int virt_fastrpc_mem_unmap(struct vfastrpc_file *vfl, int fd, u64 size,
+static int virt_fastrpc_mem_unmap(struct vfastrpc_file *vfl, int fd, u64 len,
 		uintptr_t raddr)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -1815,7 +1818,7 @@ static int virt_fastrpc_mem_unmap(struct vfastrpc_file *vfl, int fd, u64 size,
 	vmsg->hdr.msgid = msg->msgid;
 	vmsg->hdr.result = 0xffffffff;
 	vmsg->fd = fd;
-	vmsg->len = size;
+	vmsg->len = len;
 	vmsg->raddr = raddr;
 
 	err = vfastrpc_txbuf_send(vfl, vmsg, sizeof(*vmsg));
@@ -1869,7 +1872,7 @@ static int vfastrpc_internal_mem_unmap(struct vfastrpc_file *vfl,
 		goto bail;
 	}
 
-	err = virt_fastrpc_mem_unmap(vfl, map->fd, map->size, map->raddr);
+	err = virt_fastrpc_mem_unmap(vfl, map->fd, map->len, map->raddr);
 	if (err)
 		goto bail;
 
