@@ -23,12 +23,27 @@
 
 #define CLIENT_STATE_OFFSET 4
 #define SUBSYS_STATE_OFFSET 8
+#define QCOM_SSR_TYPE_INVALID 0xFF
 
 static void __iomem *base_reg;
 
 enum subsystem_type {
 	VIRTUAL,
 	NATIVE,
+};
+
+/* Host side possible SSR event type definition. */
+enum {
+	SUBSYS_BEFORE_SHUTDOWN,
+	SUBSYS_AFTER_SHUTDOWN,
+	SUBSYS_BEFORE_POWERUP,
+	SUBSYS_AFTER_POWERUP,
+	SUBSYS_RAMDUMP_NOTIFICATION,
+	SUBSYS_POWERUP_FAILURE,
+	SUBSYS_PROXY_VOTE,
+	SUBSYS_PROXY_UNVOTE,
+	SUBSYS_SOC_RESET,
+	SUBSYS_NOTIF_TYPE_COUNT,
 };
 
 struct subsystem_descriptor {
@@ -54,8 +69,33 @@ static void subsystem_notif_wq_func(struct work_struct *work)
 
 	state = readl_relaxed(base_reg + subsystem->offset);
 	subsystem_handle = qcom_ssr_get_subsys(subsystem->name);
+
+	/* Frontend qcom_ssr_notify_typ only supports 4 types with
+	 * different enum value.
+	 * Forward 0xFF to client for unknown types and forward return
+	 * code to host.
+	 */
+	switch (state) {
+		case SUBSYS_BEFORE_SHUTDOWN:
+			state = QCOM_SSR_BEFORE_SHUTDOWN;
+			break;
+		case SUBSYS_AFTER_SHUTDOWN:
+			state = QCOM_SSR_AFTER_SHUTDOWN;
+			break;
+		case SUBSYS_BEFORE_POWERUP:
+			state = QCOM_SSR_BEFORE_POWERUP;
+			break;
+		case SUBSYS_AFTER_POWERUP:
+			state = QCOM_SSR_AFTER_POWERUP;
+			break;
+		default:
+			state = QCOM_SSR_TYPE_INVALID;
+			break;
+	}
+
 	ret = qcom_notify_ssr_clients(subsystem_handle, state, NULL);
 	writel_relaxed(ret, base_reg + subsystem->offset + CLIENT_STATE_OFFSET);
+	pr_info("%s: receive %s interrupt with state: %d ret: %d\n", __func__, subsystem->name, state, ret);
 }
 
 static int subsystem_state_callback(struct notifier_block *this,

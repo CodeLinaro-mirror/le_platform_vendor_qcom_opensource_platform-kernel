@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ion.h>
@@ -17,6 +17,9 @@
 #define SIZE_OF_MAPPING(nents) \
 	(sizeof(struct virt_fastrpc_mapping) + \
 		nents * sizeof(struct virt_fastrpc_sgl))
+
+/* Max value of unique fastrpc tgid */
+#define MAX_FRPC_TGID 65
 
 enum virtio_fastrpc_invoke_attr {
 	/* bit0, 1: FE/BE crc enabled, 0: FE/BE crc disabled */
@@ -39,12 +42,20 @@ FASTRPC_MAX_DSP_ATTRIBUTES] = {
 	PERF_CAPABILITY_SUPPORT	/* PERF_LOGGING_V2_SUPPORT feature is supported, unsupported = 0 */
 };
 
+/* Array to keep track unique tgid_frpc usage */
+static bool frpc_tgid_usage_array[MAX_FRPC_TGID] = {0};
+
 struct virt_fastrpc_cmd {
 	struct hlist_node hn;
 	struct virt_fastrpc_msg *msg;
 	u32 tid;	/* thread id */
 	u32 cmd;	/* cmd type */
 };
+
+struct virt_fastrpc_sgtable {
+	u32 nents;
+	struct virt_fastrpc_sgl sgl[0];
+} __packed;
 
 struct virt_fastrpc_mapping {
 	s32 fd;
@@ -142,6 +153,14 @@ static inline int64_t getnstimediff(struct timespec64 *start)
 	return ns;
 }
 
+static inline size_t get_size_of_mapping(struct vfastrpc_mmap *map)
+{
+	if (map->attr & VFASTRPC_MAP_ATTR_BUFFER_MAPPED)
+		return SIZE_OF_MAPPING(0);
+	else
+		return SIZE_OF_MAPPING(map->table->nents);
+}
+
 static void context_list_ctor(struct fastrpc_ctx_lst *me)
 {
 	INIT_HLIST_HEAD(&me->interrupted);
@@ -179,6 +198,7 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->mode = FASTRPC_MODE_SERIAL;
 	vfl->domain = -1;
 	fl->cid = -1;
+	fl->tgid_frpc = -1;
 	fl->init_mem = NULL;
 	fl->qos_request = 0;
 	fl->dsp_proc_init = 0;
@@ -188,6 +208,8 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->is_compat = false;
 	fl->exit_notif = false;
 	fl->exit_async = false;
+	fl->set_session_info = false;
+	fl->multi_session_support = false;
 	init_completion(&fl->work);
 	init_completion(&fl->dma_invoke);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
@@ -383,6 +405,9 @@ int vfastrpc_file_free(struct vfastrpc_file *vfl)
 	spin_lock_irqsave(&fl->aqlock, flags);
 	atomic_add(1, &fl->async_queue_job_count);
 	wake_up_interruptible(&fl->async_wait_queue);
+	/* Reset the tgid usage to false */
+	if (fl->tgid_frpc != -1)
+		frpc_tgid_usage_array[fl->tgid_frpc] = false;
 	spin_unlock_irqrestore(&fl->aqlock, flags);
 
 	vfastrpc_context_list_dtor(vfl);
@@ -603,7 +628,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			mutex_unlock(&fl->map_mutex);
 			if (err)
 				goto bail;
-			len = SIZE_OF_MAPPING(maps[i]->table->nents);
+			len = get_size_of_mapping(maps[i]);
 		}
 		copylen += len;
 		if (i < inbufs)
@@ -657,7 +682,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			size_t len = lpra[i].buf.len;
 
 			if (maps[i]) {
-				len = SIZE_OF_MAPPING(maps[i]->table->nents);
+				len = get_size_of_mapping(maps[i]);
 				ctx->desc[i].type = VFASTRPC_BUF_TYPE_ION;
 			} else if (len < PAGE_SIZE) {
 				ctx->desc[i].type = VFASTRPC_BUF_TYPE_NORMAL;
@@ -688,10 +713,8 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 
 	ctx->size = size;
 	vmsg = (struct virt_invoke_msg *)ctx->msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_INVOKE;
 	vmsg->hdr.len = size;
@@ -748,20 +771,24 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 				goto bail;
 			}
 			rpra[i].offset = offset;
-			rpra[i].payload_len = SIZE_OF_MAPPING(table->nents);
+			rpra[i].payload_len = get_size_of_mapping(maps[i]);
 
 			vmmap = (struct virt_fastrpc_mapping *)payload;
 			vmmap->fd = maps[i]->fd;
 			vmmap->refcount = maps[i]->refs;
 			vmmap->va = maps[i]->va;
-			vmmap->len = maps[i]->len;
+			vmmap->len = maps[i]->size;
 			vmmap->attr = VFASTRPC_MAP_ATTR_CACHED;
-			vmmap->nents = table->nents;
 
-			sgbuf = (struct virt_fastrpc_sgl *)vmmap->sgl;
-			for_each_sg(table->sgl, sgl, table->nents, index) {
-				sgbuf[index].pv = sg_dma_address(sgl);
-				sgbuf[index].len = sg_dma_len(sgl);
+			if ((maps[i]->attr & VFASTRPC_MAP_ATTR_BUFFER_MAPPED)) {
+				vmmap->nents = 0;
+			} else {
+				vmmap->nents = table->nents;
+				sgbuf = (struct virt_fastrpc_sgl *)vmmap->sgl;
+				for_each_sg(table->sgl, sgl, table->nents, index) {
+					sgbuf[index].pv = sg_dma_address(sgl);
+					sgbuf[index].len = sg_dma_len(sgl);
+				}
 			}
 
 			calc_compare_crc(ctx, (uint8_t *)payload, (int)rpra[i].payload_len,
@@ -1202,70 +1229,6 @@ bail:
 	return err;
 }
 
-static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
-				struct fastrpc_ioctl_invoke2 *inv2)
-{
-	union {
-		struct fastrpc_ioctl_invoke_async inv;
-		struct fastrpc_ioctl_async_response async_res;
-	} p;
-	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
-	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	uint32_t size = 0;
-	int err = 0, domain = vfl->domain;
-
-	if (inv2->req == FASTRPC_INVOKE2_ASYNC ||
-		inv2->req == FASTRPC_INVOKE2_ASYNC_RESPONSE) {
-		VERIFY(err, domain == CDSP_DOMAIN_ID || domain == CDSP1_DOMAIN_ID);
-		if (err)
-			goto bail;
-
-		dsp_cap_ptr = &vfl->apps->channel[domain].dsp_cap_kernel;
-		VERIFY(err, dsp_cap_ptr->dsp_attributes[ASYNC_FASTRPC_CAP] == 1);
-		if (err) {
-			err = -EPROTONOSUPPORT;
-			goto bail;
-		}
-	}
-	switch (inv2->req) {
-	case FASTRPC_INVOKE2_ASYNC:
-		size = sizeof(struct fastrpc_ioctl_invoke_async);
-		VERIFY(err, size >= inv2->size);
-		if (err) {
-			err = -EBADE;
-			goto bail;
-		}
-
-		K_COPY_FROM_USER(err, 0, &p.inv, (void *)inv2->invparam, size);
-		if (err)
-			goto bail;
-
-		VERIFY(err, 0 == (err = vfastrpc_internal_invoke(vfl, fl->mode,
-						&p.inv)));
-		if (err)
-			goto bail;
-		break;
-	case FASTRPC_INVOKE2_ASYNC_RESPONSE:
-		VERIFY(err,
-		sizeof(struct fastrpc_ioctl_async_response) >= inv2->size);
-		if (err) {
-			err = -EBADE;
-			goto bail;
-		}
-		err = vfastrpc_get_async_response(&p.async_res,
-						(void *)inv2->invparam, vfl);
-		break;
-	case FASTRPC_INVOKE2_KERNEL_OPTIMIZATIONS:
-		err = -ENOTTY;
-		break;
-	default:
-		err = -ENOTTY;
-		break;
-	}
-bail:
-	return err;
-}
-
 static int virt_fastrpc_munmap(struct vfastrpc_file *vfl, uintptr_t raddr,
 				size_t size)
 {
@@ -1280,10 +1243,8 @@ static int virt_fastrpc_munmap(struct vfastrpc_file *vfl, uintptr_t raddr,
 		return -ENOMEM;
 
 	vmsg = (struct virt_munmap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MUNMAP;
 	vmsg->hdr.len = sizeof(*vmsg);
@@ -1440,10 +1401,8 @@ static int virt_fastrpc_munmap_fd(struct vfastrpc_file *vfl,
 		return -ENOMEM;
 
 	vmsg = (struct virt_munmap_fd_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MUNMAP_FD;
 	vmsg->hdr.len = total_size;
@@ -1542,10 +1501,8 @@ static int virt_fastrpc_mmap(struct vfastrpc_file *vfl, uint32_t flags,
 		return -ENOMEM;
 
 	vmsg = (struct virt_mmap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MMAP;
 	vmsg->hdr.len = total_size;
@@ -1669,6 +1626,8 @@ static int vfastrpc_internal_mmap(struct vfastrpc_file *vfl,
 		vfastrpc_mmap_free(vfl, map, 0);
 		mutex_unlock(&fl->map_mutex);
 	}
+	if (err && rbuf)
+		vfastrpc_buf_free(rbuf, 0);
 	mutex_unlock(&fl->internal_map_mutex);
 	return err;
 }
@@ -1680,21 +1639,52 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	struct vfastrpc_apps *me = vfl->apps;
 	struct virt_mem_map_msg *vmsg, *rsp = NULL;
-	struct virt_fastrpc_msg *msg;
+	struct virt_fastrpc_msg *msg = NULL;
 	struct virt_fastrpc_sgl *sgbuf;
 	int err, sgbuf_size, total_size;
 	struct scatterlist *sgl = NULL;
 	int sgl_index = 0;
-
+	u32 new_nents = 0;
+	struct scatterlist *new_table = NULL;
+	struct virt_fastrpc_sgtable *intmap = NULL;
+	struct vfastrpc_buf * int_buf = NULL;
 	sgbuf_size = vmmap->nents * sizeof(*sgbuf);
+	total_size = sizeof(*vmsg) + sgbuf_size;
+
+	if (total_size > me->buf_size) {
+		vmmap->attr |= VFASTRPC_MAP_ATTR_INTERNAL_MAP;
+		err = vfastrpc_buf_alloc(vfl, PAGE_ALIGN(sizeof(*intmap) + sgbuf_size), 0, 0,
+			VFASTRPC_BUF_TYPE_INTERNAL, PAGE_KERNEL, &int_buf);
+		if (err)
+			goto bail;
+
+		intmap = int_buf->va;
+		intmap->nents = vmmap->nents;
+		sgbuf = intmap->sgl;
+
+		for_each_sg(table, sgl, vmmap->nents, sgl_index) {
+			sgbuf[sgl_index].pv = sg_dma_address(sgl);
+			sgbuf[sgl_index].len = sg_dma_len(sgl);
+		}
+
+		new_table = int_buf->sgt.sgl;
+		new_nents = int_buf->sgt.nents;
+		sgbuf_size = new_nents * sizeof(*sgbuf);
+
+		sgl_index = 0;
+	}
+
 	total_size = sizeof(*vmsg) + sgbuf_size;
 
 	msg = virt_alloc_msg(vfl, total_size);
 	if (!msg)
-		return -ENOMEM;
+	{
+		err = -ENOMEM;
+		goto bail;
+	}
 
 	vmsg = (struct virt_mem_map_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MEM_MAP;
@@ -1708,9 +1698,17 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 	memcpy(&vmsg->mmap, vmmap, sizeof(*vmmap));
 	sgbuf = vmsg->mmap.sgl;
 
-	for_each_sg(table, sgl, vmmap->nents, sgl_index) {
-		sgbuf[sgl_index].pv = sg_dma_address(sgl);
-		sgbuf[sgl_index].len = sg_dma_len(sgl);
+	if (vmmap->attr & VFASTRPC_MAP_ATTR_INTERNAL_MAP) {
+		vmsg->mmap.nents = new_nents;
+		for_each_sg(new_table, sgl, new_nents, sgl_index) {
+			sgbuf[sgl_index].pv = page_to_phys(sg_page(sgl));
+			sgbuf[sgl_index].len = sgl->length;
+		}
+	} else {
+		for_each_sg(table, sgl, vmmap->nents, sgl_index) {
+			sgbuf[sgl_index].pv = sg_dma_address(sgl);
+			sgbuf[sgl_index].len = sg_dma_len(sgl);
+		}
 	}
 
 	err = vfastrpc_txbuf_send(vfl, vmsg, total_size);
@@ -1730,7 +1728,13 @@ static int virt_fastrpc_mem_map(struct vfastrpc_file *vfl, s32 offset,
 bail:
 	if (rsp)
 		vfastrpc_rxbuf_send(vfl, rsp, me->buf_size);
-	virt_free_msg(vfl, msg);
+
+	if (int_buf) {
+		vfastrpc_buf_free(int_buf, 0);
+	}
+
+	if (msg)
+		virt_free_msg(vfl, msg);
 	return err;
 }
 
@@ -1776,6 +1780,7 @@ static int vfastrpc_internal_mem_map(struct vfastrpc_file *vfl,
 	if (err)
 		goto bail;
 	ud->m.vaddrout = map->raddr;
+	map->attr |= VFASTRPC_MAP_ATTR_BUFFER_MAPPED;
 bail:
 	if (err) {
 		dev_err(me->dev, "%s failed to map fd %d flags %d err %d\n",
@@ -1804,7 +1809,7 @@ static int virt_fastrpc_mem_unmap(struct vfastrpc_file *vfl, int fd, u64 size,
 		return -ENOMEM;
 
 	vmsg = (struct virt_mem_unmap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MEM_UNMAP;
@@ -1905,10 +1910,8 @@ static int virt_fastrpc_control(struct vfastrpc_file *vfl,
 		return -ENOMEM;
 
 	vmsg = (struct virt_control_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_CONTROL;
 	vmsg->hdr.len = sizeof(*vmsg);
@@ -1970,6 +1973,25 @@ bail:
 	return err;
 }
 
+// Generate a unique process ID to DSP process
+static int get_unique_hlos_process_id(struct vfastrpc_file *vfl)
+{
+	int tgid_frpc = -1, tgid_index = 1;
+	struct vfastrpc_apps *me = vfl->apps;
+
+	spin_lock(&me->hlock);
+	for (tgid_index = 1; tgid_index < MAX_FRPC_TGID; tgid_index++) {
+		if (!frpc_tgid_usage_array[tgid_index]) {
+			tgid_frpc = tgid_index;
+			/* Set the tgid usage to false */
+			frpc_tgid_usage_array[tgid_index] = true;
+			break;
+		}
+	}
+	spin_unlock(&me->hlock);
+	return tgid_frpc;
+}
+
 static int vfastrpc_set_process_info(struct vfastrpc_file *vfl)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -1980,7 +2002,15 @@ static int vfastrpc_set_process_info(struct vfastrpc_file *vfl)
 	memcpy(cur_comm, current->comm, TASK_COMM_LEN);
 	cur_comm[TASK_COMM_LEN - 1] = '\0';
 	fl->tgid = current->tgid;
-
+	fl->tgid_frpc = get_unique_hlos_process_id(vfl);
+	VERIFY(err, fl->tgid_frpc != -1);
+	if (err) {
+		ADSPRPC_ERR("too many fastrpc clients, max %u allowed\n", MAX_FRPC_TGID);
+		err = -EUSERS;
+		return err;
+	}
+	ADSPRPC_INFO("HLOS pid %d, domain %d is mapped to unique sessions pid %d",
+						fl->tgid, vfl->domain, fl->tgid_frpc);
 	/*
 	 * Third-party apps don't have permission to open the fastrpc device, so
 	 * it is opened on their behalf by DSP HAL. This is detected by
@@ -2009,8 +2039,11 @@ static int vfastrpc_set_process_info(struct vfastrpc_file *vfl)
 			spin_unlock(&fl->hlock);
 			return err;
 		}
-		scnprintf(fl->debug_buf, buf_size, "%.10s%s%d",
-			cur_comm, "_", current->pid);
+		/* Use HLOS PID, unique fastrpc PID, CID in debugfs filename,
+		 * for better ability to debug
+		 */
+		scnprintf(fl->debug_buf, buf_size, "%.10s%s%d%s%d%s%d",
+			cur_comm, "_", current->pid, "_", fl->tgid_frpc, "_", vfl->domain);
 		fl->debugfs_file = debugfs_create_file(fl->debug_buf, 0644,
 			vfl->apps->debugfs_root, fl, vfl->apps->debugfs_fops);
 		if (IS_ERR_OR_NULL(fl->debugfs_file)) {
@@ -2038,6 +2071,18 @@ static int vfastrpc_internal_get_info(struct vfastrpc_file *vfl,
 	VERIFY(err, fl != NULL);
 	if (err)
 		goto bail;
+
+	spin_lock(&fl->hlock);
+	if (fl->set_session_info) {
+		spin_unlock(&fl->hlock);
+		ADSPRPC_ERR("Set session info invoked multiple times\n");
+		err = -EBADR;
+		goto bail;
+	}
+	// Set set_session_info to true
+	fl->set_session_info = true;
+	spin_unlock(&fl->hlock);
+
 	err = vfastrpc_set_process_info(vfl);
 	if (err)
 		goto bail;
@@ -2088,10 +2133,8 @@ static int virt_fastrpc_open(struct vfastrpc_file *vfl,
 	}
 
 	vmsg = (struct virt_open_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
-	if (fl->sessionid)
-		vmsg->hdr.tid |= (1 << SESSION_ID_INDEX);
 	vmsg->hdr.cid = -1;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_OPEN;
 	vmsg->hdr.len = sizeof(*vmsg);
@@ -2247,7 +2290,6 @@ static int vfastrpc_setmode(struct vfastrpc_file *vfl,
 					unsigned long ioctl_param)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	struct vfastrpc_apps *me = vfl->apps;
 	int err = 0;
 
 	switch ((uint32_t)ioctl_param) {
@@ -2256,8 +2298,8 @@ static int vfastrpc_setmode(struct vfastrpc_file *vfl,
 		fl->mode = (uint32_t)ioctl_param;
 		break;
 	case FASTRPC_MODE_SESSION:
-		err = -ENOTTY;
-		dev_err(me->dev, "session mode is not supported\n");
+		if (!fl->multi_session_support)
+			fl->sessionid = 1;
 		break;
 	case FASTRPC_MODE_PROFILE:
 		fl->profile = (uint32_t)ioctl_param;
@@ -2266,6 +2308,142 @@ static int vfastrpc_setmode(struct vfastrpc_file *vfl,
 		err = -ENOTTY;
 		break;
 	}
+	return err;
+}
+
+static int vfastrpc_set_session_info(
+                struct fastrpc_proc_sess_info *sess_info,
+                        void *param, struct vfastrpc_file *vfl)
+{
+        int err = 0;
+        //struct fastrpc_apps *me = &gfa;
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	struct vfastrpc_apps *me = vfl->apps;
+
+	if (fl->set_session_info) {
+		ADSPRPC_ERR("Set session info invoked multiple times\n");
+		err = -EBADR;
+		goto bail;
+	}
+	/*
+	* Third-party apps don't have permission to open the fastrpc device, so
+	* it is opened on their behalf by DSP HAL. This is detected by
+	* comparing current PID with the one stored during device open.
+	*/
+	if (current->tgid != fl->tgid_open)
+		fl->untrusted_process = true;
+	VERIFY(err, sess_info->pd_type > DEFAULT_UNUSED &&
+		sess_info->pd_type < MAX_PD_TYPE);
+	if (err) {
+		ADSPRPC_ERR(
+		"Session PD type %u is invalid for the process\n",
+							sess_info->pd_type);
+		err = -EBADR;
+		goto bail;
+	}
+	if (fl->untrusted_process && sess_info->pd_type != USERPD) {
+		ADSPRPC_ERR(
+		"Session PD type %u not allowed for untrusted process\n",
+							sess_info->pd_type);
+		err = -EBADR;
+		goto bail;
+	}
+	if (sess_info->session_id >= me->max_sess_per_proc) {
+		ADSPRPC_ERR(
+		"Session ID %u cannot be beyond %u\n",
+			sess_info->session_id, me->max_sess_per_proc);
+		 err = -EBADR;
+		goto bail;
+	}
+	fl->sessionid = sess_info->session_id;
+	// Set multi_session_support, to disable old way of setting session_id
+	fl->multi_session_support = true;
+	VERIFY(err, 0 == (err = vfastrpc_internal_get_info(vfl, &(sess_info->domain_id))));
+	if (err)
+		goto bail;
+	K_COPY_TO_USER(err, 0, param, sess_info,
+		sizeof(struct fastrpc_proc_sess_info));
+bail:
+	return err;
+}
+
+
+static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
+				struct fastrpc_ioctl_invoke2 *inv2)
+{
+	union {
+		struct fastrpc_ioctl_invoke_async inv;
+		struct fastrpc_ioctl_async_response async_res;
+		struct fastrpc_proc_sess_info sess_info;
+	} p;
+	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	uint32_t size = 0;
+	int err = 0, domain = vfl->domain;
+
+	if (inv2->req == FASTRPC_INVOKE2_ASYNC ||
+		inv2->req == FASTRPC_INVOKE2_ASYNC_RESPONSE) {
+		VERIFY(err, domain == CDSP_DOMAIN_ID || domain == CDSP1_DOMAIN_ID);
+		if (err)
+			goto bail;
+
+		dsp_cap_ptr = &vfl->apps->channel[domain].dsp_cap_kernel;
+		VERIFY(err, dsp_cap_ptr->dsp_attributes[ASYNC_FASTRPC_CAP] == 1);
+		if (err) {
+			err = -EPROTONOSUPPORT;
+			goto bail;
+		}
+	}
+	switch (inv2->req) {
+	case FASTRPC_INVOKE2_ASYNC:
+		size = sizeof(struct fastrpc_ioctl_invoke_async);
+		VERIFY(err, size >= inv2->size);
+		if (err) {
+			err = -EBADE;
+			goto bail;
+		}
+
+		K_COPY_FROM_USER(err, 0, &p.inv, (void *)inv2->invparam, size);
+		if (err)
+			goto bail;
+
+		VERIFY(err, 0 == (err = vfastrpc_internal_invoke(vfl, fl->mode,
+						&p.inv)));
+		if (err)
+			goto bail;
+		break;
+	case FASTRPC_INVOKE2_ASYNC_RESPONSE:
+		VERIFY(err,
+		sizeof(struct fastrpc_ioctl_async_response) >= inv2->size);
+		if (err) {
+			err = -EBADE;
+			goto bail;
+		}
+		err = vfastrpc_get_async_response(&p.async_res,
+						(void *)inv2->invparam, vfl);
+		break;
+	case FASTRPC_INVOKE2_KERNEL_OPTIMIZATIONS:
+		err = -ENOTTY;
+		break;
+	case FASTRPC_INVOKE2_SESS_INFO:
+		VERIFY(err,
+		sizeof(struct fastrpc_proc_sess_info) >= inv2->size);
+		if (err) {
+			err = -EBADE;
+			goto bail;
+		}
+		K_COPY_FROM_USER(err, fl->is_compat, &p.sess_info,
+		(void *)inv2->invparam, inv2->size);
+		if (err)
+			goto bail;
+		err = vfastrpc_set_session_info(&p.sess_info,
+				(void *)inv2->invparam, vfl);
+		break;
+	default:
+		err = -ENOTTY;
+		break;
+	}
+bail:
 	return err;
 }
 
