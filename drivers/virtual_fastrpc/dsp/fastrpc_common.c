@@ -1,11 +1,46 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "fastrpc_common.h"
 #include "virtio_fastrpc_queue.h"
 #include "virtio_fastrpc_mem.h"
+
+/* Array to keep track unique tgid_frpc usage */
+static bool frpc_tgid_usage_array[MAX_FRPC_TGID] = {0};
+
+// Generate a unique process ID to DSP process
+int get_unique_hlos_process_id(struct vfastrpc_file *vfl)
+{
+	int tgid_frpc = -1, tgid_index = 1;
+	struct vfastrpc_apps *me = vfl->apps;
+	unsigned long irq_flags = 0;
+
+	spin_lock_irqsave(&me->hlock, irq_flags);
+	for (tgid_index = 1; tgid_index < MAX_FRPC_TGID; tgid_index++) {
+		if (!frpc_tgid_usage_array[tgid_index]) {
+			tgid_frpc = tgid_index;
+			/* Set the tgid usage to false */
+			frpc_tgid_usage_array[tgid_index] = true;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&me->hlock, irq_flags);
+	return tgid_frpc;
+}
+
+void put_unique_hlos_process_id(struct vfastrpc_file *vfl)
+{
+	struct vfastrpc_apps *me = vfl->apps;
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	unsigned long irq_flags = 0;
+
+	spin_lock_irqsave(&me->hlock, irq_flags);
+	if (fl->tgid_frpc != -1)
+		frpc_tgid_usage_array[fl->tgid_frpc] = false;
+	spin_unlock_irqrestore(&me->hlock, irq_flags);
+}
 
 int virt_fastrpc_close(struct vfastrpc_file *vfl)
 {
