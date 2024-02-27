@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 ifneq ($(TARGET_USES_GY), true)
-ifeq ($(call is-board-platform-in-list,sdmsteppe msmnile gen4), true)
+ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4), true)
 # Drivers for both Metal and GVM
     PRODUCT_PACKAGES += wallpower_charger.ko
 
@@ -10,6 +10,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy, $(TARGET_BOARD_PLATFORM)$(TARGET
     PRODUCT_PACKAGES += silent_boot.ko
     PRODUCT_PACKAGES += silent-mode-hw-monitoring.ko
     PRODUCT_PACKAGES += dump_boot_log.ko
+    PRODUCT_PACKAGES += s2r_wakeup_marker.ko
 
 else
 # Drivers for GVM only
