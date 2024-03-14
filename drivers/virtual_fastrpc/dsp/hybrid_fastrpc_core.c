@@ -73,6 +73,10 @@ static uint32_t kernel_capabilities[FASTRPC_MAX_ATTRIBUTES -
 	/* PERF_LOGGING_V2_SUPPORT feature is supported, unsupported = 0 */
 	KERNEL_ERROR_CODE_V1_SUPPORT,
 	/* Fastrpc Driver error code changes present */
+	0,
+	/* Userspace allocation allowed for DSP memory request*/
+	DSPSIGNAL_SUPPORT
+	/* Lightweight driver-based signaling */
 };
 
 static int hfastrpc_internal_invoke(struct vfastrpc_file *vfl,
@@ -2666,12 +2670,12 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 	// track outgoing signals in the driver. The userspace library does a
 	// basic sanity check and any security validation needs to be done by
 	// the recipient.
-	DSPSIGNAL_VERBOSE("Send signal PID %u, signal %u\n",
-			  (unsigned int)fl->tgid, (unsigned int)sig->signal_id);
+	DSPSIGNAL_VERBOSE("Send signal PID %d, UPID %d, signal %u\n",
+			  fl->tgid, vfl->upid, sig->signal_id);
 	VERIFY(err, sig->signal_id < DSPSIGNAL_NUM_SIGNALS);
 	if (err) {
-		ADSPRPC_ERR("Sending bad signal %u for PID %u",
-			    sig->signal_id, (unsigned int)fl->tgid);
+		ADSPRPC_ERR("Sending bad signal %u for PID %d, UPID %d\n",
+			    sig->signal_id, fl->tgid, vfl->upid);
 		err = -EBADR;
 		goto bail;
 	}
@@ -2686,7 +2690,7 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 		goto bail;
 	}
 
-	msg = (((uint64_t)fl->tgid) << 32) | ((uint64_t)sig->signal_id);
+	msg = (((uint64_t)vfl->upid) << 32) | ((uint64_t)sig->signal_id);
 	err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
 	mutex_unlock(&channel_ctx->smd_mutex);
 

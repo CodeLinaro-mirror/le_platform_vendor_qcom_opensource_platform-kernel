@@ -88,7 +88,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x3
+#define FE_MINOR_VER 0x4
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -308,10 +308,11 @@ static const struct file_operations fops = {
 
 static void handle_remote_signal(uint64_t msg, int domain)
 {
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	uint32_t pid = msg >> 32;
 	uint32_t signal_id = msg & 0xffffffff;
 	struct fastrpc_file *fl = NULL;
+	struct vfastrpc_file *vfl = NULL;
 	struct hlist_node *n = NULL;
 	unsigned long irq_flags = 0;
 
@@ -324,7 +325,8 @@ static void handle_remote_signal(uint64_t msg, int domain)
 
 	spin_lock_irqsave(&me->hlock, irq_flags);
 	hlist_for_each_entry_safe(fl, n, &me->drivers, hn) {
-		if ((fl->tgid == pid) && (to_vfastrpc_file(fl)->domain == domain)) {
+		vfl = to_vfastrpc_file(fl);
+		if ((vfl->upid == pid) && (vfl->domain == domain)) {
 			unsigned long fflags = 0;
 
 			spin_lock_irqsave(&fl->dspsignals_lock, fflags);
