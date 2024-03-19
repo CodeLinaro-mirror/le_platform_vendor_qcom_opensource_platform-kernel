@@ -30,7 +30,10 @@
 
 #define CDSP1_DOMAIN_ID			4
 
+/* fastRPC DSP firmware capability */
 #define UNSIGNED_PD_SUPPORT		1
+
+/* fastRPC kernel driver capability */
 #define PERF_CAPABILITY_SUPPORT		(1 << 1)
 #define KERNEL_ERROR_CODE_V1_SUPPORT	1
 #define USERSPACE_ALLOCATION_SUPPORT	1
@@ -358,6 +361,7 @@ struct vfastrpc_apps {
 	uint32_t max_sess_per_proc;
 	spinlock_t hlock;
 	struct hlist_head drivers;
+	uint32_t duplicate_rsp_err_cnt;
 };
 
 int get_unique_hlos_process_id(struct vfastrpc_file *vfl);

@@ -88,7 +88,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x2
+#define FE_MINOR_VER 0x3
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -381,17 +381,18 @@ static void fastrpc_queue_pd_status(struct fastrpc_file *fl, int domain, int sta
 
 static void fastrpc_notif_find_process(int domain, struct smq_notif_rspv3 *notif)
 {
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	struct fastrpc_file *fl = NULL;
+	struct vfastrpc_file *vfl = NULL;
 	struct hlist_node *n;
 	bool is_process_found = false;
-	int sessionid = 0;
 	unsigned long irq_flags = 0;
 
+	ADSPRPC_DEBUG("Received PD status %d for UPID %d\n", notif->status, notif->pid);
 	spin_lock_irqsave(&me->hlock, irq_flags);
 	hlist_for_each_entry_safe(fl, n, &me->drivers, hn) {
-		if (fl->tgid == notif->pid ||
-				(fl->tgid == (notif->pid & PROCESS_ID_MASK))) {
+		vfl = to_vfastrpc_file(fl);
+		if (vfl->upid == notif->pid) {
 			is_process_found = true;
 			break;
 		}
@@ -400,9 +401,7 @@ static void fastrpc_notif_find_process(int domain, struct smq_notif_rspv3 *notif
 
 	if (!is_process_found)
 		return;
-	if (notif->pid & SESSION_ID_MASK)
-		sessionid = 1;
-	fastrpc_queue_pd_status(fl, domain, notif->status, sessionid);
+	fastrpc_queue_pd_status(fl, domain, notif->status, fl->sessionid);
 }
 
 static inline void fastrpc_update_rxmsg_buf(struct vfastrpc_channel_ctx *chan,
@@ -494,7 +493,7 @@ int fastrpc_handle_rpc_response(void *data, int len, int domain)
 	struct smq_notif_rspv3 *notif = (struct smq_notif_rspv3 *)data;
 	struct smq_invoke_rspv2 *rspv2 = NULL;
 	struct vfastrpc_invoke_ctx *ctx = NULL;
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	uint32_t index, rsp_flags = 0, early_wake_time = 0, ver = 0;
 	int err = 0, ignore_rsp_err = 0;
 	struct vfastrpc_channel_ctx *chan = NULL;
@@ -502,6 +501,8 @@ int fastrpc_handle_rpc_response(void *data, int len, int domain)
 	int64_t ns = 0;
 	uint64_t xo_time_in_us = 0;
 
+	ADSPRPC_DEBUG("Received RSP from domain %d, len %d\n",
+			domain, len);
 	xo_time_in_us = CONVERT_CNT_TO_US(__arch_counter_get_cntvct());
 
 	if (len == sizeof(uint64_t)) {
