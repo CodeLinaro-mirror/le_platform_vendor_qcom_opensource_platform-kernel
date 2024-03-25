@@ -24,8 +24,11 @@ ccflags-y += $(LINUX_INC)
 
 LINUXINCLUDE	+= \
 		   -I$(PLAT_DRV_ROOT)/include \
-		   -I$(PLAT_DRV_ROOT)/include/linux \
-		   -I$(PLAT_DRV_ROOT)/drivers/virtual_fastrpc/include/uapi
+		   -I$(PLAT_DRV_ROOT)/include/linux
+
+ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 msmnile))
+  LINUXINCLUDE	+= -I$(PLAT_DRV_ROOT)/drivers/virtual_fastrpc/include/uapi
+endif
 
 USERINCLUDE	+= -I$(PLAT_DRV_ROOT)/include/uapi
 
@@ -39,4 +42,7 @@ obj-$(CONFIG_QCOM_SOCINFO_DT)   += socinfo_dt.o
 obj-$(CONFIG_MSM_QUIN_SUBSYSTEM_NOTIF_VIRT) += subsystem_notif_virt.o
 obj-$(CONFIG_QCOM_ADSP_VOTE_SMP2P) += adsp_vote_smp2p.o
 obj-$(CONFIG_CPUFREQ_VM)        += vm-cpufreq.o
-obj-m				+= virtual_fastrpc/
+
+ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 msmnile))
+  obj-m				+= virtual_fastrpc/
+endif

@@ -5,7 +5,6 @@ LINUXINCLUDE += \
 
 ccflags-y += -DDSP_TRACE_INCLUDE_PATH=../../../../../../vendor/qcom/opensource/dsp-kernel/dsp
 
-obj-$(CONFIG_VIRTIO_FASTRPC) += vfastrpc.o
 vfastrpc-objs := dsp/virtio_fastrpc_base.o \
 		 dsp/virtio_fastrpc_core.o \
 		 dsp/virtio_fastrpc_mem.o \
@@ -13,7 +12,6 @@ vfastrpc-objs := dsp/virtio_fastrpc_base.o \
 		 dsp/fastrpc_ioctl.o \
 		 dsp/fastrpc_common.o
 
-obj-$(CONFIG_HYBRID_FASTRPC) += hfastrpc.o
 hfastrpc-objs := dsp/hybrid_fastrpc_vdev.o \
 		 dsp/hybrid_fastrpc_core.o \
 		 dsp/virtio_fastrpc_mem.o \
@@ -23,6 +21,9 @@ hfastrpc-objs := dsp/hybrid_fastrpc_vdev.o \
 		 dsp/adsprpc_rpmsg.o
 
 ifeq ($(CONFIG_COMPAT), y)
-	vfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
-	hfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
+  vfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
+  hfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
 endif
+
+obj-$(CONFIG_VIRTIO_FASTRPC) += vfastrpc.o
+obj-$(CONFIG_HYBRID_FASTRPC) += hfastrpc.o
