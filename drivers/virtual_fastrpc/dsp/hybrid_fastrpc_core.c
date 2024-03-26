@@ -2165,8 +2165,8 @@ static void hfastrpc_wait_for_completion(struct vfastrpc_invoke_ctx *ctx,
 			int *ptr_interrupted, uint32_t kernel, uint32_t async,
 			bool *ptr_isworkdone)
 {
-	struct vfastrpc_file *vfl = ctx->vfl;
-	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	struct vfastrpc_file *vfl = NULL;
+	struct fastrpc_file *fl = NULL;
 	int interrupted = 0, err = 0;
 	int jj;
 	bool wait_resp;
@@ -2182,6 +2182,8 @@ static void hfastrpc_wait_for_completion(struct vfastrpc_invoke_ctx *ctx,
 					err);
 		return;
 	}
+	vfl = ctx->vfl;
+	fl = to_fastrpc_file(vfl);
 	wakeTime = ctx->early_wake_time;
 
 	do {
