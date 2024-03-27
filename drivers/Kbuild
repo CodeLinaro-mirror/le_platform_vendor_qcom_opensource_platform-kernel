@@ -48,6 +48,7 @@ obj-$(CONFIG_MSM_QUIN_SUBSYSTEM_NOTIF_VIRT) += subsystem_notif_virt.o
 obj-$(CONFIG_QCOM_ADSP_VOTE_SMP2P) += adsp_vote_smp2p.o
 obj-$(CONFIG_MSM_S2R_WAKEUP_MARKER) += s2r_wakeup_marker.o
 obj-$(CONFIG_CPUFREQ_VM)        += vm-cpufreq.o
+obj-$(CONFIG_QCOM_SUBSYS_STATUS) += subsystem_status.o
 
 ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 msmnile))
   obj-m				+= virtual_fastrpc/
