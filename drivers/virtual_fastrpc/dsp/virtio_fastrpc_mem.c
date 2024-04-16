@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "virtio_fastrpc_mem.h"
@@ -468,22 +468,56 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	struct vfastrpc_apps *me = vfl->apps;
 	struct virt_smmu_map_msg *vmsg, *rsp = NULL;
-	struct virt_fastrpc_msg *msg;
+	struct virt_fastrpc_msg *msg = NULL;
 	struct virt_fastrpc_sgl *sgbuf;
 	int err, sgbuf_size, total_size;
 	struct scatterlist *sgl = NULL;
 	int sgl_index = 0;
+	u32 lattr = attr;
+	struct virt_fastrpc_sgtable *intmap = NULL;
+	struct vfastrpc_buf intbuf;
 
 	sgbuf_size = nents * sizeof(*sgbuf);
 	total_size = sizeof(*vmsg) +
 		sizeof(struct fastrpc_smmu_map) + sgbuf_size;
 
+	if (total_size > me->buf_size) {
+		lattr |= VFASTRPC_MAP_ATTR_INTERNAL_MAP;
+		memset(&intbuf, 0, sizeof(struct vfastrpc_buf));
+		intbuf.size = PAGE_ALIGN(sizeof(*intmap) + sgbuf_size);
+		intbuf.pages = vfastrpc_alloc_buffer(me->dev, &intbuf,
+				GFP_KERNEL, PAGE_KERNEL);
+		if (!intbuf.pages) {
+			dev_err(me->dev, "%s: fail to alloc buffer size %llx\n",
+					__func__, intbuf.size);
+			return -ENOMEM;
+		}
+		intmap = intbuf.va;
+		intmap->nents = nents;
+		sgbuf = intmap->sgl;
+
+		for_each_sg(table, sgl, nents, sgl_index) {
+			if (sg_dma_len(sgl)) {
+				sgbuf[sgl_index].pv = sg_dma_address(sgl);
+				sgbuf[sgl_index].len = sg_dma_len(sgl);
+			} else {
+				sgbuf[sgl_index].pv = page_to_phys(sg_page(sgl));
+				sgbuf[sgl_index].len = sgl->length;
+			}
+		}
+		sgbuf_size = intbuf.sgt.nents * sizeof(*sgbuf);
+		total_size = sizeof(*vmsg) +
+			sizeof(struct fastrpc_smmu_map) + sgbuf_size;
+	}
+
 	msg = virt_alloc_msg(vfl, total_size);
-	if (!msg)
-		return -ENOMEM;
+	if (!msg) {
+		err = -ENOMEM;
+		goto bail;
+	}
 
 	vmsg = (struct virt_smmu_map_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_SMMU_MAP;
@@ -491,18 +525,25 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 	vmsg->hdr.msgid = msg->msgid;
 	vmsg->hdr.result = 0xffffffff;
 	vmsg->nents = 1;
-	vmsg->smmu_map[0].attrs = attr;
-	vmsg->smmu_map[0].nents = nents;
+	vmsg->smmu_map[0].attrs = lattr;
+	vmsg->smmu_map[0].nents = intmap ? intbuf.sgt.nents : nents;
 	vmsg->smmu_map[0].da = 0;
 	sgbuf = vmsg->smmu_map[0].sgl;
 
-	for_each_sg(table, sgl, nents, sgl_index) {
-		if (sg_dma_len(sgl)) {
-			sgbuf[sgl_index].pv = sg_dma_address(sgl);
-			sgbuf[sgl_index].len = sg_dma_len(sgl);
-		} else {
+	if (intmap) {
+		for_each_sg(intbuf.sgt.sgl, sgl, intbuf.sgt.nents, sgl_index) {
 			sgbuf[sgl_index].pv = page_to_phys(sg_page(sgl));
 			sgbuf[sgl_index].len = sgl->length;
+		}
+	} else {
+		for_each_sg(table, sgl, nents, sgl_index) {
+			if (sg_dma_len(sgl)) {
+				sgbuf[sgl_index].pv = sg_dma_address(sgl);
+				sgbuf[sgl_index].len = sg_dma_len(sgl);
+			} else {
+				sgbuf[sgl_index].pv = page_to_phys(sg_page(sgl));
+				sgbuf[sgl_index].len = sgl->length;
+			}
 		}
 	}
 
@@ -528,7 +569,10 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 bail:
 	if (rsp)
 		vfastrpc_rxbuf_send(vfl, rsp, me->buf_size);
-	virt_free_msg(vfl, msg);
+	if (msg)
+		virt_free_msg(vfl, msg);
+	if (intmap)
+		vfastrpc_free_buffer(&intbuf);
 	return err;
 }
 
@@ -547,7 +591,7 @@ static int virt_smmu_unmap(struct vfastrpc_file *vfl, uint64_t da)
 		return -ENOMEM;
 
 	vmsg = (struct virt_smmu_unmap_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_SMMU_UNMAP;

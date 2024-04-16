@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -73,6 +73,10 @@ static uint32_t kernel_capabilities[FASTRPC_MAX_ATTRIBUTES -
 	/* PERF_LOGGING_V2_SUPPORT feature is supported, unsupported = 0 */
 	KERNEL_ERROR_CODE_V1_SUPPORT,
 	/* Fastrpc Driver error code changes present */
+	0,
+	/* Userspace allocation allowed for DSP memory request*/
+	DSPSIGNAL_SUPPORT
+	/* Lightweight driver-based signaling */
 };
 
 static int hfastrpc_internal_invoke(struct vfastrpc_file *vfl,
@@ -141,7 +145,7 @@ static inline uint64_t ptr_to_uint64(void *ptr)
 	return addr;
 }
 
-static int hfastrpc_set_process_info(struct vfastrpc_file *vfl)
+static int hfastrpc_set_process_info(struct vfastrpc_file *vfl, u32 domain)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	int err = 0, buf_size = 0;
@@ -151,6 +155,14 @@ static int hfastrpc_set_process_info(struct vfastrpc_file *vfl)
 	memcpy(cur_comm, current->comm, TASK_COMM_LEN);
 	cur_comm[TASK_COMM_LEN - 1] = '\0';
 	fl->tgid = current->tgid;
+	fl->tgid_frpc = get_unique_hlos_process_id(vfl);
+	VERIFY(err, fl->tgid_frpc != -1);
+	if (err) {
+		ADSPRPC_ERR("too many fastrpc clients, max %u allowed\n", MAX_FRPC_TGID);
+		return -EUSERS;
+	}
+	ADSPRPC_INFO("HLOS pid %d, domain %d is mapped to unique sessions pid %d\n",
+			fl->tgid, domain, fl->tgid_frpc);
 
 	/*
 	 * Third-party apps don't have permission to open the fastrpc device, so
@@ -162,7 +174,9 @@ static int hfastrpc_set_process_info(struct vfastrpc_file *vfl)
 	scnprintf(strpid, PID_SIZE, "%d", current->pid);
 	if (vfl->apps->debugfs_root) {
 		buf_size = strlen(cur_comm) + strlen("_")
-			+ strlen(strpid) + 1;
+			+ strlen(strpid) + strlen("_")
+			+ PID_SIZE + strlen("_")
+			+ strlen(__TOSTR__(NUM_CHANNELS)) + 1;
 
 		spin_lock(&fl->hlock);
 		if (fl->debug_buf_alloced_attempted) {
@@ -180,8 +194,8 @@ static int hfastrpc_set_process_info(struct vfastrpc_file *vfl)
 			spin_unlock(&fl->hlock);
 			return err;
 		}
-		scnprintf(fl->debug_buf, buf_size, "%.10s%s%d",
-			cur_comm, "_", current->pid);
+		scnprintf(fl->debug_buf, buf_size, "%.10s%s%d%s%d%s%d",
+			cur_comm, "_", current->pid, "_", fl->tgid_frpc, "_", domain);
 		fl->debugfs_file = debugfs_create_file(fl->debug_buf, 0644,
 			vfl->apps->debugfs_root, fl, vfl->apps->debugfs_fops);
 		if (IS_ERR_OR_NULL(fl->debugfs_file)) {
@@ -208,17 +222,30 @@ static int hfastrpc_get_info(struct vfastrpc_file *vfl,
 	VERIFY(err, fl != NULL);
 	if (err)
 		goto bail;
-	err = hfastrpc_set_process_info(vfl);
+
+	spin_lock(&fl->hlock);
+	if (fl->set_session_info) {
+		spin_unlock(&fl->hlock);
+		ADSPRPC_ERR("Set session info invoked multiple times\n");
+		err = -EBADR;
+		goto bail;
+	}
+	// Set set_session_info to true
+	fl->set_session_info = true;
+	spin_unlock(&fl->hlock);
+
+	domain = *info;
+	VERIFY(err, domain < vfl->apps->num_channels);
+	if (err)
+		goto bail;
+
+	err = hfastrpc_set_process_info(vfl, domain);
 	if (err)
 		goto bail;
 
 	if (vfl->domain == -1) {
 		struct vfastrpc_channel_ctx *chan = NULL;
 
-		domain = *info;
-		VERIFY(err, domain < vfl->apps->num_channels);
-		if (err)
-			goto bail;
 		chan = &vfl->apps->channel[domain];
 		/* Check to see if the device node is non-secure */
 		if (fl->dev_minor == MINOR_NUM_DEV) {
@@ -238,6 +265,7 @@ static int hfastrpc_get_info(struct vfastrpc_file *vfl,
 			}
 		}
 		vfl->domain = domain;
+		fl->cid = domain;
 		fl->ssrcount = chan->ssrcount;
 	}
 	*info = 1;
@@ -351,6 +379,7 @@ static int hfastrpc_control(struct vfastrpc_file *vfl,
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	int err = 0;
+	unsigned long flags = 0;
 
 	VERIFY(err, !IS_ERR_OR_NULL(fl) && !IS_ERR_OR_NULL(fl->apps));
 	if (err)
@@ -365,6 +394,13 @@ static int hfastrpc_control(struct vfastrpc_file *vfl,
 		break;
 	case FASTRPC_CONTROL_KALLOC:
 		cp->kalloc.kalloc_support = 1;
+		break;
+	case FASTRPC_CONTROL_NOTIF_WAKE:
+		fl->exit_notif = true;
+		spin_lock_irqsave(&fl->proc_state_notif.nqlock, flags);
+		atomic_add(1, &fl->proc_state_notif.notif_queue_count);
+		wake_up_interruptible(&fl->proc_state_notif.notif_wait_queue);
+		spin_unlock_irqrestore(&fl->proc_state_notif.nqlock, flags);
 		break;
 	default:
 		err = -ENOTTY;
@@ -390,7 +426,7 @@ static int virt_fastrpc_open(struct vfastrpc_file *vfl,
 	}
 
 	vmsg = (struct virt_open_msg *)msg->txbuf;
-	vmsg->hdr.pid = fl->tgid;
+	vmsg->hdr.pid = fl->tgid_frpc;
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = -1;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_OPEN;
@@ -434,8 +470,12 @@ static int hfastrpc_init_process(struct vfastrpc_file *vfl,
 {
 	int err = 0;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	struct fastrpc_file *fl_curr = NULL;
+	struct vfastrpc_apps *me = vfl->apps;
 	struct fastrpc_ioctl_init *init = &uproc->init;
 	int domain = vfl->domain;
+	struct hlist_node *n = NULL;
+	unsigned long irq_flags = 0;
 	struct vfastrpc_channel_ctx *chan = &vfl->apps->channel[domain];
 
 	if (chan->unsigned_support && fl->dev_minor == MINOR_NUM_DEV) {
@@ -471,7 +511,23 @@ static int hfastrpc_init_process(struct vfastrpc_file *vfl,
 				goto bail;
 			}
 		}
-
+		if (uproc->attrs & FASTRPC_MODE_UNSIGNED_MODULE)
+			fl->is_unsigned_pd = true;
+		/* Validate that any existing sessions of process are of same pd type */
+		spin_lock_irqsave(&me->hlock, irq_flags);
+		hlist_for_each_entry_safe(fl_curr, n, &me->drivers, hn) {
+			if ((fl != fl_curr) && (fl->tgid == fl_curr->tgid) &&
+					(fl->cid == fl_curr->cid) &&
+					fl->is_unsigned_pd != fl_curr->is_unsigned_pd) {
+					err = -ECONNREFUSED;
+					break;
+			}
+		}
+		spin_unlock_irqrestore(&me->hlock, irq_flags);
+		if (err) {
+			ADSPRPC_ERR("existing sessions PD type are not aligned\n");
+			goto bail;
+		}
 		vfl->procattrs = uproc->attrs;
 		break;
 	case FASTRPC_INIT_CREATE_STATIC:
@@ -982,7 +1038,6 @@ static int hfastrpc_setmode(struct vfastrpc_file *vfl,
 					unsigned long ioctl_param)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	struct vfastrpc_apps *me = vfl->apps;
 	int err = 0;
 
 	switch ((uint32_t)ioctl_param) {
@@ -991,8 +1046,8 @@ static int hfastrpc_setmode(struct vfastrpc_file *vfl,
 		fl->mode = (uint32_t)ioctl_param;
 		break;
 	case FASTRPC_MODE_SESSION:
-		err = -ENOTTY;
-		dev_err(me->dev, "session mode is not supported\n");
+		if (!fl->multi_session_support)
+			fl->sessionid = 1;
 		break;
 	case FASTRPC_MODE_PROFILE:
 		fl->profile = (uint32_t)ioctl_param;
@@ -1443,6 +1498,7 @@ struct vfastrpc_file *hfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->mode = FASTRPC_MODE_SERIAL;
 	vfl->domain = -1;
 	fl->cid = -1;
+	fl->tgid_frpc = -1;
 	fl->tvm_remote_domain = -1;
 	fl->init_mem = NULL;
 	fl->qos_request = 0;
@@ -1453,6 +1509,8 @@ struct vfastrpc_file *hfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->is_compat = false;
 	fl->exit_notif = false;
 	fl->exit_async = false;
+	fl->set_session_info = false;
+	fl->multi_session_support = false;
 	init_completion(&fl->work);
 	init_completion(&fl->dma_invoke);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
@@ -1488,16 +1546,17 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	if (fl->dsp_proc_init == 1)
 		virt_fastrpc_close(vfl);
 
-	spin_lock(&fl->hlock);
-	hlist_del_init(&fl->hn);
-	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
-	spin_unlock(&fl->hlock);
-
 	/* Dummy wake up to exit Async worker thread */
 	spin_lock_irqsave(&fl->aqlock, flags);
 	atomic_add(1, &fl->async_queue_job_count);
 	wake_up_interruptible(&fl->async_wait_queue);
 	spin_unlock_irqrestore(&fl->aqlock, flags);
+
+	// Dummy wake up to exit notification worker thread
+	spin_lock_irqsave(&fl->proc_state_notif.nqlock, flags);
+	atomic_add(1, &fl->proc_state_notif.notif_queue_count);
+	wake_up_interruptible(&fl->proc_state_notif.notif_wait_queue);
+	spin_unlock_irqrestore(&fl->proc_state_notif.nqlock, flags);
 
 	hfastrpc_context_list_dtor(vfl);
 	hfastrpc_cached_buf_list_free(vfl);
@@ -1515,6 +1574,11 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 		hfastrpc_mmap_free(vfl, lmap, 1);
 	} while (lmap);
 	mutex_unlock(&fl->map_mutex);
+
+	put_unique_hlos_process_id(vfl);
+	spin_lock_irqsave(&vfl->apps->hlock, flags);
+	hlist_del_init(&fl->hn);
+	spin_unlock_irqrestore(&vfl->apps->hlock, flags);
 
 	for (i = 0; i < (DSPSIGNAL_NUM_SIGNALS / DSPSIGNAL_GROUP_SIZE); i++)
 		kfree(fl->signal_groups[i]);
@@ -2119,8 +2183,8 @@ static void hfastrpc_wait_for_completion(struct vfastrpc_invoke_ctx *ctx,
 			int *ptr_interrupted, uint32_t kernel, uint32_t async,
 			bool *ptr_isworkdone)
 {
-	struct vfastrpc_file *vfl = ctx->vfl;
-	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	struct vfastrpc_file *vfl = NULL;
+	struct fastrpc_file *fl = NULL;
 	int interrupted = 0, err = 0;
 	int jj;
 	bool wait_resp;
@@ -2136,6 +2200,8 @@ static void hfastrpc_wait_for_completion(struct vfastrpc_invoke_ctx *ctx,
 					err);
 		return;
 	}
+	vfl = ctx->vfl;
+	fl = to_fastrpc_file(vfl);
 	wakeTime = ctx->early_wake_time;
 
 	do {
@@ -2390,12 +2456,126 @@ static int hfastrpc_get_async_response(
 	return 0;
 }
 
+static int hfastrpc_set_session_info(
+		struct fastrpc_proc_sess_info *sess_info,
+			void *param, struct vfastrpc_file *vfl)
+{
+	int err = 0;
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	struct vfastrpc_apps *me = vfl->apps;
+
+	/*
+	 * Third-party apps don't have permission to open the fastrpc device, so
+	 * it is opened on their behalf by DSP HAL. This is detected by
+	 * comparing current PID with the one stored during device open.
+	 */
+	if (current->tgid != fl->tgid_open)
+		fl->untrusted_process = true;
+	VERIFY(err, sess_info->pd_type > DEFAULT_UNUSED &&
+				sess_info->pd_type < MAX_PD_TYPE);
+	if (err) {
+		ADSPRPC_ERR(
+		"Session PD type %u is invalid for the process\n",
+							sess_info->pd_type);
+		err = -EBADR;
+		goto bail;
+	}
+	if (fl->untrusted_process && sess_info->pd_type != USERPD) {
+		ADSPRPC_ERR(
+		"Session PD type %u not allowed for untrusted process\n",
+						sess_info->pd_type);
+		err = -EBADR;
+		goto bail;
+	}
+	if (sess_info->session_id >= me->max_sess_per_proc) {
+		ADSPRPC_ERR(
+		"Session ID %u cannot be beyond %u\n",
+				sess_info->session_id, me->max_sess_per_proc);
+		err = -EBADR;
+		goto bail;
+	}
+	fl->sessionid = sess_info->session_id;
+	// Set multi_session_support, to disable old way of setting session_id
+	fl->multi_session_support = true;
+	VERIFY(err, 0 == (err = hfastrpc_get_info(vfl, &(sess_info->domain_id))));
+	if (err)
+		goto bail;
+	K_COPY_TO_USER(err, 0, param, sess_info,
+			sizeof(struct fastrpc_proc_sess_info));
+bail:
+	return err;
+}
+
+static int hfastrpc_wait_on_notif_queue(
+			struct fastrpc_ioctl_notif_rsp *notif_rsp,
+			struct vfastrpc_file *vfl)
+{
+	int err = 0, interrupted = 0;
+	unsigned long flags;
+	struct fastrpc_file *fl = NULL;
+	struct smq_notif_rsp  *notif = NULL, *inotif = NULL, *n = NULL;
+
+read_notif_status:
+        if (!vfl) {
+                err = -EBADF;
+                goto bail;
+        }
+	fl = to_fastrpc_file(vfl);
+	interrupted = wait_event_interruptible(fl->proc_state_notif.notif_wait_queue,
+				atomic_read(&fl->proc_state_notif.notif_queue_count));
+	if (fl->exit_notif) {
+		err = -EFAULT;
+		goto bail;
+	}
+	VERIFY(err, 0 == (err = interrupted));
+	if (err)
+		goto bail;
+
+	spin_lock_irqsave(&fl->proc_state_notif.nqlock, flags);
+	list_for_each_entry_safe(inotif, n, &fl->clst.notif_queue, notifn) {
+		list_del_init(&inotif->notifn);
+		atomic_sub(1, &fl->proc_state_notif.notif_queue_count);
+		notif = inotif;
+		break;
+	}
+	spin_unlock_irqrestore(&fl->proc_state_notif.nqlock, flags);
+
+	if (notif) {
+		notif_rsp->status = notif->status;
+		notif_rsp->domain = notif->domain;
+		notif_rsp->session = notif->session;
+	} else {// Go back to wait if ctx is invalid
+		ADSPRPC_ERR("Invalid status notification response\n");
+		goto read_notif_status;
+	}
+bail:
+	kfree(notif);
+	return err;
+}
+
+static int hfastrpc_get_notif_response(
+		struct fastrpc_ioctl_notif_rsp *notif,
+			void *param, struct vfastrpc_file *vfl)
+{
+	int err = 0;
+
+	err = hfastrpc_wait_on_notif_queue(notif, vfl);
+	if (err)
+		goto bail;
+	K_COPY_TO_USER(err, 0, param, notif,
+			sizeof(struct fastrpc_ioctl_notif_rsp));
+bail:
+	return err;
+}
+
 static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 				struct fastrpc_ioctl_invoke2 *inv2)
 {
 	union {
 		struct fastrpc_ioctl_invoke_async inv;
 		struct fastrpc_ioctl_async_response async_res;
+		struct fastrpc_proc_sess_info sess_info;
+		struct fastrpc_ioctl_notif_rsp notif;
 	} p;
 	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -2446,6 +2626,30 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 	case FASTRPC_INVOKE2_KERNEL_OPTIMIZATIONS:
 		err = -ENOTTY;
 		break;
+	case FASTRPC_INVOKE2_STATUS_NOTIF:
+		VERIFY(err,
+		sizeof(struct fastrpc_ioctl_notif_rsp) >= inv2->size);
+		if (err) {
+			err = -EBADE;
+			goto bail;
+		}
+		err = hfastrpc_get_notif_response(&p.notif,
+						(void *)inv2->invparam, vfl);
+		break;
+	case FASTRPC_INVOKE2_SESS_INFO:
+		VERIFY(err,
+		sizeof(struct fastrpc_proc_sess_info) >= inv2->size);
+		if (err) {
+			err = -EBADE;
+			goto bail;
+		}
+		K_COPY_FROM_USER(err, fl->is_compat, &p.sess_info,
+					 (void *)inv2->invparam, inv2->size);
+		if (err)
+			goto bail;
+		err = hfastrpc_set_session_info(&p.sess_info,
+						(void *)inv2->invparam, vfl);
+		break;
 	default:
 		err = -ENOTTY;
 		break;
@@ -2466,12 +2670,12 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 	// track outgoing signals in the driver. The userspace library does a
 	// basic sanity check and any security validation needs to be done by
 	// the recipient.
-	DSPSIGNAL_VERBOSE("Send signal PID %u, signal %u\n",
-			  (unsigned int)fl->tgid, (unsigned int)sig->signal_id);
+	DSPSIGNAL_VERBOSE("Send signal PID %d, UPID %d, signal %u\n",
+			  fl->tgid, vfl->upid, sig->signal_id);
 	VERIFY(err, sig->signal_id < DSPSIGNAL_NUM_SIGNALS);
 	if (err) {
-		ADSPRPC_ERR("Sending bad signal %u for PID %u",
-			    sig->signal_id, (unsigned int)fl->tgid);
+		ADSPRPC_ERR("Sending bad signal %u for PID %d, UPID %d\n",
+			    sig->signal_id, fl->tgid, vfl->upid);
 		err = -EBADR;
 		goto bail;
 	}
@@ -2486,7 +2690,7 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 		goto bail;
 	}
 
-	msg = (((uint64_t)fl->tgid) << 32) | ((uint64_t)sig->signal_id);
+	msg = (((uint64_t)vfl->upid) << 32) | ((uint64_t)sig->signal_id);
 	err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
 	mutex_unlock(&channel_ctx->smd_mutex);
 

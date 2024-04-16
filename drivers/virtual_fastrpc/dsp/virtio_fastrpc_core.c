@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ion.h>
@@ -17,9 +17,6 @@
 #define SIZE_OF_MAPPING(nents) \
 	(sizeof(struct virt_fastrpc_mapping) + \
 		nents * sizeof(struct virt_fastrpc_sgl))
-
-/* Max value of unique fastrpc tgid */
-#define MAX_FRPC_TGID 65
 
 enum virtio_fastrpc_invoke_attr {
 	/* bit0, 1: FE/BE crc enabled, 0: FE/BE crc disabled */
@@ -42,20 +39,12 @@ FASTRPC_MAX_DSP_ATTRIBUTES] = {
 	PERF_CAPABILITY_SUPPORT	/* PERF_LOGGING_V2_SUPPORT feature is supported, unsupported = 0 */
 };
 
-/* Array to keep track unique tgid_frpc usage */
-static bool frpc_tgid_usage_array[MAX_FRPC_TGID] = {0};
-
 struct virt_fastrpc_cmd {
 	struct hlist_node hn;
 	struct virt_fastrpc_msg *msg;
 	u32 tid;	/* thread id */
 	u32 cmd;	/* cmd type */
 };
-
-struct virt_fastrpc_sgtable {
-	u32 nents;
-	struct virt_fastrpc_sgl sgl[0];
-} __packed;
 
 struct virt_fastrpc_mapping {
 	s32 fd;
@@ -425,11 +414,7 @@ int vfastrpc_file_free(struct vfastrpc_file *vfl)
 	} while (lmap);
 	mutex_unlock(&fl->map_mutex);
 
-	spin_lock_irqsave(&vfl->apps->hlock, flags);
-	/* Reset the tgid usage to false */
-	if (fl->tgid_frpc != -1)
-		frpc_tgid_usage_array[fl->tgid_frpc] = false;
-	spin_unlock_irqrestore(&vfl->apps->hlock, flags);
+	put_unique_hlos_process_id(vfl);
 
 	mutex_destroy(&fl->map_mutex);
 	mutex_destroy(&fl->internal_map_mutex);
@@ -1629,6 +1614,8 @@ static int vfastrpc_internal_mmap(struct vfastrpc_file *vfl,
 		vfastrpc_mmap_free(vfl, map, 0);
 		mutex_unlock(&fl->map_mutex);
 	}
+	if (err && rbuf)
+		vfastrpc_buf_free(rbuf, 0);
 	mutex_unlock(&fl->internal_map_mutex);
 	return err;
 }
@@ -1972,25 +1959,6 @@ static int vfastrpc_internal_control(struct vfastrpc_file *vfl,
 	}
 bail:
 	return err;
-}
-
-// Generate a unique process ID to DSP process
-static int get_unique_hlos_process_id(struct vfastrpc_file *vfl)
-{
-	int tgid_frpc = -1, tgid_index = 1;
-	struct vfastrpc_apps *me = vfl->apps;
-
-	spin_lock(&me->hlock);
-	for (tgid_index = 1; tgid_index < MAX_FRPC_TGID; tgid_index++) {
-		if (!frpc_tgid_usage_array[tgid_index]) {
-			tgid_frpc = tgid_index;
-			/* Set the tgid usage to false */
-			frpc_tgid_usage_array[tgid_index] = true;
-			break;
-		}
-	}
-	spin_unlock(&me->hlock);
-	return tgid_frpc;
 }
 
 static int vfastrpc_set_process_info(struct vfastrpc_file *vfl)

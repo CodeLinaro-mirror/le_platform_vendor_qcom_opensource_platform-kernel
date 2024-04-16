@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -88,7 +88,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x0
+#define FE_MINOR_VER 0x4
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -165,6 +165,14 @@ static ssize_t hfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 				"\n%s %d %s %d\n", "channel =", vfl->domain,
 				"proc_attr =", vfl->procattrs);
+
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+			"\n========%s %s %s========\n", title,
+			" SESSION INFO ", title);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d %s %d %s 0x%lx\n", "tgid_frpc =",
+				fl->tgid_frpc, "sessionid =", fl->sessionid,
+				"upid =", vfl->upid);
 
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
@@ -271,9 +279,9 @@ static int hfastrpc_open(struct inode *inode, struct file *filp)
 	vfl->apps = me;
 	fl->apps = &fa;
 
-	spin_lock_irqsave(&fa.hlock, irq_flags);
-	hlist_add_head(&fl->hn, &fa.drivers);
-	spin_unlock_irqrestore(&fa.hlock, irq_flags);
+	spin_lock_irqsave(&me->hlock, irq_flags);
+	hlist_add_head(&fl->hn, &me->drivers);
+	spin_unlock_irqrestore(&me->hlock, irq_flags);
 
 	filp->private_data = fl;
 	return 0;
@@ -300,10 +308,11 @@ static const struct file_operations fops = {
 
 static void handle_remote_signal(uint64_t msg, int domain)
 {
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	uint32_t pid = msg >> 32;
 	uint32_t signal_id = msg & 0xffffffff;
 	struct fastrpc_file *fl = NULL;
+	struct vfastrpc_file *vfl = NULL;
 	struct hlist_node *n = NULL;
 	unsigned long irq_flags = 0;
 
@@ -316,7 +325,8 @@ static void handle_remote_signal(uint64_t msg, int domain)
 
 	spin_lock_irqsave(&me->hlock, irq_flags);
 	hlist_for_each_entry_safe(fl, n, &me->drivers, hn) {
-		if ((fl->tgid == pid) && (to_vfastrpc_file(fl)->domain == domain)) {
+		vfl = to_vfastrpc_file(fl);
+		if ((vfl->upid == pid) && (vfl->domain == domain)) {
 			unsigned long fflags = 0;
 
 			spin_lock_irqsave(&fl->dspsignals_lock, fflags);
@@ -373,17 +383,18 @@ static void fastrpc_queue_pd_status(struct fastrpc_file *fl, int domain, int sta
 
 static void fastrpc_notif_find_process(int domain, struct smq_notif_rspv3 *notif)
 {
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	struct fastrpc_file *fl = NULL;
+	struct vfastrpc_file *vfl = NULL;
 	struct hlist_node *n;
 	bool is_process_found = false;
-	int sessionid = 0;
 	unsigned long irq_flags = 0;
 
+	ADSPRPC_DEBUG("Received PD status %d for UPID %d\n", notif->status, notif->pid);
 	spin_lock_irqsave(&me->hlock, irq_flags);
 	hlist_for_each_entry_safe(fl, n, &me->drivers, hn) {
-		if (fl->tgid == notif->pid ||
-				(fl->tgid == (notif->pid & PROCESS_ID_MASK))) {
+		vfl = to_vfastrpc_file(fl);
+		if (vfl->upid == notif->pid) {
 			is_process_found = true;
 			break;
 		}
@@ -392,9 +403,7 @@ static void fastrpc_notif_find_process(int domain, struct smq_notif_rspv3 *notif
 
 	if (!is_process_found)
 		return;
-	if (notif->pid & SESSION_ID_MASK)
-		sessionid = 1;
-	fastrpc_queue_pd_status(fl, domain, notif->status, sessionid);
+	fastrpc_queue_pd_status(fl, domain, notif->status, fl->sessionid);
 }
 
 static inline void fastrpc_update_rxmsg_buf(struct vfastrpc_channel_ctx *chan,
@@ -486,7 +495,7 @@ int fastrpc_handle_rpc_response(void *data, int len, int domain)
 	struct smq_notif_rspv3 *notif = (struct smq_notif_rspv3 *)data;
 	struct smq_invoke_rspv2 *rspv2 = NULL;
 	struct vfastrpc_invoke_ctx *ctx = NULL;
-	struct fastrpc_apps *me = &fa;
+	struct vfastrpc_apps *me = &vfa;
 	uint32_t index, rsp_flags = 0, early_wake_time = 0, ver = 0;
 	int err = 0, ignore_rsp_err = 0;
 	struct vfastrpc_channel_ctx *chan = NULL;
@@ -494,6 +503,8 @@ int fastrpc_handle_rpc_response(void *data, int len, int domain)
 	int64_t ns = 0;
 	uint64_t xo_time_in_us = 0;
 
+	ADSPRPC_DEBUG("Received RSP from domain %d, len %d\n",
+			domain, len);
 	xo_time_in_us = CONVERT_CNT_TO_US(__arch_counter_get_cntvct());
 
 	if (len == sizeof(uint64_t)) {
@@ -804,6 +815,9 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 
 	memset(me, 0, sizeof(*me));
 	spin_lock_init(&me->msglock);
+	spin_lock_init(&me->hlock);
+	INIT_HLIST_HEAD(&me->drivers);
+	me->max_sess_per_proc = DEFAULT_MAX_SESS_PER_PROC;
 
 	vdev->priv = me;
 	me->vdev = vdev;

@@ -7,6 +7,7 @@ SOCINFO_DT_SELECT := CONFIG_QCOM_SOCINFO_DT=m
 SUBSYSTEM_NOTIF_VIRT_SELECT := CONFIG_MSM_QUIN_SUBSYSTEM_NOTIF_VIRT=m
 QCOM_ADSP_VOTE_SMP2P_SELECT := CONFIG_QCOM_ADSP_VOTE_SMP2P=m
 CPUFREQ_VM_SELECT := CONFIG_CPUFREQ_VM=m
+MSM_S2R_WAKEUP_MARKER := CONFIG_MSM_S2R_WAKEUP_MARKER=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -52,7 +53,7 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
-ifneq ( ,$(filter sdmsteppe_au msmnile_au gen4_au, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
+ifneq ( ,$(filter $(MSMSTEPPE)_au msmnile_au gen4_au, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for only LA-Metal
 ###########################################################
 KBUILD_OPTIONS += MODNAME=aop_set_ddr_freq
@@ -148,6 +149,29 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
+###########################################################
+KBUILD_OPTIONS += MODNAME=qcom_s2r_wakeup_marker
+KBUILD_OPTIONS += $(MSM_S2R_WAKEUP_MARKER)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,qcom_s2r_wakeup_marker_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := s2r_wakeup_marker.ko
+LOCAL_MODULE_KBUILD_NAME  := s2r_wakeup_marker.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += qcom_s2r_wakeup_marker_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,qcom_s2r_wakeup_marker_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
 endif
 
 # Drivers for LA-GVM only
