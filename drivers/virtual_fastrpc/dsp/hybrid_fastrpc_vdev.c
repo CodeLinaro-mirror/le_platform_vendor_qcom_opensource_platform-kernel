@@ -904,6 +904,16 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 	if (IS_ERR_OR_NULL(secure_dev))
 		goto device_create_bail;
 
+#ifdef CONFIG_VIRTIO_MMIO_SWIOTLB
+	/* MMIO SWIOTLB replaced dma_map_ops of virtio platfrom device
+	 * So use char device of fastrpc as a WR
+	 */
+	me->dev = dev;
+	err = dma_coerce_mask_and_coherent(me->dev, DMA_BIT_MASK(64));
+	if (err)
+		ADSP_LOG("set DMA mask failed\n");
+#endif
+
 	virtio_device_ready(vdev);
 
 	/* set up the receive buffers */
