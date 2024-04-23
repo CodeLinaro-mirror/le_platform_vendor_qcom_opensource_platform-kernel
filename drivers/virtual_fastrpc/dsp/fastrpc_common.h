@@ -306,6 +306,7 @@ struct vfastrpc_channel_ctx {
 	uint64_t sesscount;
 	uint64_t ssrcount;
 	int in_hib;
+	void *handle;
 	uint64_t prevssrcount;
 	struct notifier_block nb;
 	int subsystemstate;

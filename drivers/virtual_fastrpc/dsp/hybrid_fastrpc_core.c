@@ -2078,8 +2078,6 @@ static int hfastrpc_invoke_send(struct vfastrpc_invoke_ctx *ctx,
 		goto bail;
 	}
 
-	channel_ctx = &vfl->apps->channel[domain];
-	mutex_lock(&channel_ctx->smd_mutex);
 	msg->pid = vfl->upid;
 	msg->tid = current->pid;
 	if (fl->sessionid)
@@ -2091,6 +2089,9 @@ static int hfastrpc_invoke_send(struct vfastrpc_invoke_ctx *ctx,
 	msg->invoke.header.sc = sc;
 	msg->invoke.page.addr = ctx->buf ? ctx->buf->da : 0;
 	msg->invoke.page.size = buf_page_size(ctx->used);
+
+	channel_ctx = &vfl->apps->channel[domain];
+	mutex_lock(&channel_ctx->smd_mutex);
 
 	if (fl->ssrcount != channel_ctx->ssrcount) {
 		err = -ECONNRESET;
@@ -2429,9 +2430,12 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 		}
 		context_free(ctx);
 	}
-	if (domain >= 0 && domain < vfl->apps->num_channels
-		&& (fl->ssrcount != vfl->apps->channel[domain].ssrcount))
-		err = -ECONNRESET;
+	if (domain >= 0 && domain < vfl->apps->num_channels) {
+		mutex_lock(&(vfl->apps->channel[domain].smd_mutex));
+		if (fl->ssrcount != vfl->apps->channel[domain].ssrcount)
+			err = -ECONNRESET;
+		mutex_unlock(&(vfl->apps->channel[domain].smd_mutex));
+	}
 
 invoke_end:
 	if (fl->profile && !interrupted && isasyncinvoke)
@@ -2689,10 +2693,10 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 		mutex_unlock(&channel_ctx->smd_mutex);
 		goto bail;
 	}
+	mutex_unlock(&channel_ctx->smd_mutex);
 
 	msg = (((uint64_t)vfl->upid) << 32) | ((uint64_t)sig->signal_id);
 	err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
-	mutex_unlock(&channel_ctx->smd_mutex);
 
 bail:
 	return err;

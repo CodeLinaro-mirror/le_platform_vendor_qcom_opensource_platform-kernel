@@ -13,6 +13,7 @@
 #include <linux/virtio_config.h>
 #include <linux/uaccess.h>
 #include <linux/of.h>
+#include <linux/remoteproc/qcom_rproc.h>
 #include "virtio_fastrpc_mem.h"
 #include "virtio_fastrpc_queue.h"
 #define CREATE_TRACE_POINTS
@@ -88,7 +89,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x4
+#define FE_MINOR_VER 0x5
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -97,6 +98,13 @@ struct hfastrpc_config {
 	u32 domain_num;
 	u32 max_buf_size;
 } __packed;
+
+/* FastRPC remote subsystem state*/
+enum fastrpc_remote_subsys_state {
+	SUBSYSTEM_RESTARTING = 0,
+	SUBSYSTEM_DOWN,
+	SUBSYSTEM_UP,
+};
 
 static struct vfastrpc_apps vfa;
 static struct fastrpc_apps fa;
@@ -728,6 +736,82 @@ vqs_del:
 	return err;
 }
 
+static void fastrpc_notify_users(struct fastrpc_file *fl)
+{
+	struct vfastrpc_invoke_ctx *ictx;
+	struct hlist_node *n;
+	unsigned long irq_flags = 0;
+
+	spin_lock_irqsave(&fl->hlock, irq_flags);
+	hlist_for_each_entry_safe(ictx, n, &fl->clst.pending, hn) {
+		ictx->is_work_done = true;
+		ictx->retval = -ECONNRESET;
+		complete(&ictx->work);
+	}
+	hlist_for_each_entry_safe(ictx, n, &fl->clst.interrupted, hn) {
+		ictx->is_work_done = true;
+		ictx->retval = -ECONNRESET;
+		complete(&ictx->work);
+	}
+	spin_unlock_irqrestore(&fl->hlock, irq_flags);
+}
+
+static void fastrpc_notify_drivers(struct vfastrpc_apps *vme, int domain)
+{
+	struct fastrpc_file *fl;
+	struct hlist_node *n;
+	unsigned long irq_flags = 0;
+
+	spin_lock_irqsave(&vme->hlock, irq_flags);
+	hlist_for_each_entry_safe(fl, n, &vme->drivers, hn) {
+		if (to_vfastrpc_file(fl)->domain == domain) {
+			fastrpc_queue_pd_status(fl, domain, FASTRPC_DSP_SSR, fl->sessionid);
+			fastrpc_notify_users(fl);
+		}
+	}
+	spin_unlock_irqrestore(&vme->hlock, irq_flags);
+}
+
+static int fastrpc_restart_notifier_cb(struct notifier_block *nb,
+					unsigned long code,
+					void *data)
+{
+	struct vfastrpc_apps *vme = &vfa;
+	struct vfastrpc_channel_ctx *ctx;
+	int domain = -1;
+
+	ctx = container_of(nb, struct vfastrpc_channel_ctx, nb);
+	domain = ctx - &vme->channel[0];
+	switch (code) {
+	case QCOM_SSR_BEFORE_SHUTDOWN:
+		ADSPRPC_INFO("subsystem %s is restarting\n", gcinfo[domain].subsys);
+		mutex_lock(&vme->channel[domain].smd_mutex);
+		ctx->ssrcount++;
+		ctx->subsystemstate = SUBSYSTEM_RESTARTING;
+		mutex_unlock(&vme->channel[domain].smd_mutex);
+		break;
+	case QCOM_SSR_AFTER_SHUTDOWN:
+		ADSPRPC_INFO("subsystem %s is down\n", gcinfo[domain].subsys);
+		mutex_lock(&vme->channel[domain].smd_mutex);
+		ctx->subsystemstate = SUBSYSTEM_DOWN;
+		mutex_unlock(&vme->channel[domain].smd_mutex);
+		break;
+	case QCOM_SSR_BEFORE_POWERUP:
+		ADSPRPC_INFO("subsystem %s is about to start\n", gcinfo[domain].subsys);
+		fastrpc_notify_drivers(vme, domain);
+		break;
+	case QCOM_SSR_AFTER_POWERUP:
+		ADSPRPC_INFO("subsystem %s is up\n", gcinfo[domain].subsys);
+		mutex_lock(&vme->channel[domain].smd_mutex);
+		ctx->subsystemstate = SUBSYSTEM_UP;
+		mutex_unlock(&vme->channel[domain].smd_mutex);
+		break;
+	default:
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
 static int hfastrpc_init(void)
 {
 	int i, err = 0;
@@ -743,10 +827,23 @@ static int hfastrpc_init(void)
 	mutex_init(&me->mut_uid);
 	for (i = 0; i < NUM_CHANNELS; i++) {
 		me->jobid[i] = 1;
+		/* This mutex has to been initialized first because
+		 * it will be used in SSR callback. */
+		mutex_init(&chan[i].smd_mutex);
 		chan[i].ssrcount = 0;
 		chan[i].prevssrcount = 0;
 		chan[i].in_hib = 0;
 		chan[i].sesscount = 0;
+		chan[i].subsystemstate = SUBSYSTEM_UP;
+		chan[i].nb.notifier_call = fastrpc_restart_notifier_cb;
+		chan[i].handle = qcom_register_ssr_notifier(
+				gcinfo[i].subsys, &chan[i].nb);
+		if (IS_ERR_OR_NULL(chan[i].handle))
+			ADSPRPC_WARN("SSR notifier register failed for %s with err %d\n",
+				gcinfo[i].subsys, PTR_ERR(chan[i].handle));
+		else
+			ADSPRPC_INFO("SSR notifier registered for %s\n",
+				gcinfo[i].subsys);
 		/* All channels are secure by default except CDSP */
 		if (i == CDSP_DOMAIN_ID || i == CDSP1_DOMAIN_ID) {
 			chan[i].secure = NON_SECURE_CHANNEL;
@@ -755,7 +852,6 @@ static int hfastrpc_init(void)
 			chan[i].secure = SECURE_CHANNEL;
 			chan[i].unsigned_support = false;
 		}
-		mutex_init(&chan[i].smd_mutex);
 		fastrpc_transport_session_init(i, chan[i].subsys);
 		spin_lock_init(&chan[i].ctxlock);
 		spin_lock_init(&chan[i].gmsg_log.lock);
@@ -775,6 +871,7 @@ static void hfastrpc_deinit(void)
 	int i;
 
 	for (i = 0; i < NUM_CHANNELS; i++, chan++) {
+		qcom_unregister_ssr_notifier(chan->handle, &chan->nb);
 		fastrpc_transport_session_deinit(i);
 		mutex_destroy(&chan->smd_mutex);
 	}
