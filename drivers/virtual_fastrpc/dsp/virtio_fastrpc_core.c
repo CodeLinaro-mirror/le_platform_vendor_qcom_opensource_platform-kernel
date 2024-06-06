@@ -191,7 +191,6 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->init_mem = NULL;
 	fl->qos_request = 0;
 	fl->dsp_proc_init = 0;
-	fl->is_ramdump_pend = false;
 	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 	fl->is_unsigned_pd = false;
 	fl->is_compat = false;
