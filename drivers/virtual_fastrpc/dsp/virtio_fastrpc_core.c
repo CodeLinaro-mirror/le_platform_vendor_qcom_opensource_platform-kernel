@@ -17,6 +17,7 @@
 #define SIZE_OF_MAPPING(nents) \
 	(sizeof(struct virt_fastrpc_mapping) + \
 		nents * sizeof(struct virt_fastrpc_sgl))
+#define PERF_V2_DSP_SUPPORT (128)
 
 enum virtio_fastrpc_invoke_attr {
 	/* bit0, 1: FE/BE crc enabled, 0: FE/BE crc disabled */
@@ -974,7 +975,9 @@ static int put_args(struct vfastrpc_invoke_ctx *ctx)
 	if (ctx->crc && crclist && rpra)
 		K_COPY_TO_USER(err, 0, ctx->crc,
 				crclist, M_CRCLIST * sizeof(uint32_t));
-
+	if (ctx->perf_dsp && perf_dsp_list)
+	K_COPY_TO_USER(err, 0, ctx->perf_dsp,
+			perf_dsp_list, M_DSP_PERF_LIST * sizeof(uint64_t));
 bail:
 	return err;
 }
@@ -2238,6 +2241,7 @@ static int vfastrpc_get_info_from_kernel(struct vfastrpc_file *vfl,
 
 		/* WA for async invoke support, need to be removed later */
 		dsp_cap_ptr->dsp_attributes[ASYNC_FASTRPC_CAP] = 1;
+		dsp_cap_ptr->dsp_attributes[PERF_V2_DSP_SUPPORT] = 1 << 1;
 
 		memcpy(&cap->capability,
 			&dsp_cap_ptr->dsp_attributes[attribute_ID],
