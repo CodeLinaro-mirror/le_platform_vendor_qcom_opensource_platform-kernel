@@ -28,8 +28,6 @@
 #define PID_SIZE			10
 #define FASTRPC_MSG_MAX			256
 
-#define CDSP1_DOMAIN_ID			4
-
 /* fastRPC DSP firmware capability */
 #define UNSIGNED_PD_SUPPORT		1
 
