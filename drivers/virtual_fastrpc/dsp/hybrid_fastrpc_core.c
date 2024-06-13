@@ -2707,6 +2707,7 @@ static int hfastrpc_dspsignal_wait(struct vfastrpc_file *vfl,
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	int err = 0;
+	uint32_t timeout_usec = wait->timeout_usec;
 	unsigned long timeout = usecs_to_jiffies(wait->timeout_usec);
 	uint32_t signal_id = wait->signal_id;
 	struct fastrpc_dspsignal *s = NULL;
@@ -2744,13 +2745,14 @@ static int hfastrpc_dspsignal_wait(struct vfastrpc_file *vfl,
 	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
 
-	if (timeout != 0xffffffff)
+	if (timeout_usec != 0xffffffff)
 		ret = wait_for_completion_interruptible_timeout(&s->comp, timeout);
 	else
 		ret = wait_for_completion_interruptible(&s->comp);
 
-	if (ret == 0) {
-		DSPSIGNAL_VERBOSE("Wait for signal %u timed out\n", signal_id);
+	if (timeout_usec != 0xffffffff && ret == 0) {
+		DSPSIGNAL_VERBOSE("Wait for signal %u timed out %ld us\n",
+				signal_id, timeout_usec);
 		err = -ETIMEDOUT;
 		goto bail;
 	} else if (ret < 0) {
