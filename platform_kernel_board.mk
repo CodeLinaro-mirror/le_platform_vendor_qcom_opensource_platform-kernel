@@ -28,6 +28,10 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATF
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/s2r_wakeup_marker.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/s2r_wakeup_marker.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/s2r_wakeup_marker.ko
+
+    BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/subsystem_status.ko
+    BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/subsystem_status.ko
+    BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/subsystem_status.ko
 else
 # Drivers for GVM only
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
