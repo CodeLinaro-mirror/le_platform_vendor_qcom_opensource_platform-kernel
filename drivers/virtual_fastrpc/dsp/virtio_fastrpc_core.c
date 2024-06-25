@@ -198,7 +198,6 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->exit_async = false;
 	fl->set_session_info = false;
 	fl->multi_session_support = false;
-	init_completion(&fl->work);
 	init_completion(&fl->dma_invoke);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
 	mutex_init(&fl->internal_map_mutex);
