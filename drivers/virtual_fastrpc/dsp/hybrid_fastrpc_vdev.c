@@ -837,7 +837,6 @@ static int hfastrpc_init(void)
 		 * it will be used in SSR callback. */
 		mutex_init(&chan[i].smd_mutex);
 		chan[i].ssrcount = 0;
-		chan[i].prevssrcount = 0;
 		chan[i].in_hib = 0;
 		chan[i].sesscount = 0;
 		chan[i].subsystemstate = SUBSYSTEM_UP;

@@ -294,17 +294,17 @@ static int hfastrpc_channel_open(struct vfastrpc_file *vfl, uint32_t flags)
 		goto bail;
 
 	err = verify_transport_device(domain, fl->tvm_remote_domain);
-	if (err)
+	if (err) {
+		err = -ECONNREFUSED;
 		goto bail;
+	}
 
 	chan = &vfl->apps->channel[domain];
 	mutex_lock(&chan->smd_mutex);
-	if (chan->ssrcount != chan->prevssrcount) {
-		if (chan->subsystemstate != SUBSYSTEM_UP) {
-			err = -ECONNREFUSED;
-			mutex_unlock(&chan->smd_mutex);
-			goto bail;
-		}
+	if (chan->subsystemstate != SUBSYSTEM_UP) {
+		err = -ECONNREFUSED;
+		mutex_unlock(&chan->smd_mutex);
+		goto bail;
 	}
 	fl->ssrcount = chan->ssrcount;
 
