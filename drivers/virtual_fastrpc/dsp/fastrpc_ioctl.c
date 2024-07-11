@@ -297,7 +297,7 @@ long vfastrpc_ioctl(struct file *file, unsigned int ioctl_num,
 		if (err)
 			goto bail;
 
-		err = vfl->ops->invoke(vfl, fl->mode, &p.inv);
+		err = vfl->ops->invoke(vfl, fl->mode, &p.inv, USER_MSG);
 
 		if (err)
 			goto bail;
@@ -309,7 +309,7 @@ long vfastrpc_ioctl(struct file *file, unsigned int ioctl_num,
 			err = -EFAULT;
 			goto bail;
 		}
-		err = vfl->ops->invoke2(vfl, &p.inv2);
+		err = vfl->ops->invoke2(vfl, &p.inv2, false);
 		if (err)
 			goto bail;
 		break;

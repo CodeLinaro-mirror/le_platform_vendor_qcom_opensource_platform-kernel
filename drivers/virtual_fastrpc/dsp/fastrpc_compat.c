@@ -89,15 +89,15 @@ int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 {
 	struct vfastrpc_file *vfl = to_vfastrpc_file(fl);
 
-	return vfl->ops->invoke(vfl, mode, inv);
+	return vfl->ops->invoke(vfl, mode, inv, kernel);
 }
 
 int fastrpc_internal_invoke2(struct fastrpc_file *fl,
-				struct fastrpc_ioctl_invoke2 *inv2)
+				struct fastrpc_ioctl_invoke2 *inv2, bool is_compat)
 {
 	struct vfastrpc_file *vfl = to_vfastrpc_file(fl);
 
-	return vfl->ops->invoke2(vfl, inv2);
+	return vfl->ops->invoke2(vfl, inv2, is_compat);
 }
 
 int fastrpc_dspsignal_cancel_wait(struct fastrpc_file *fl,
