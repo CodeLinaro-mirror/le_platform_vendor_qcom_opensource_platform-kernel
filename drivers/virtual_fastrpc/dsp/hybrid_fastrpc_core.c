@@ -1161,11 +1161,11 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 	struct fastrpc_ioctl_invoke *invoke = &invokefd->inv;
 	struct vfastrpc_channel_ctx *chan = NULL;
 	unsigned long irq_flags = 0;
-	uint32_t is_kernel_memory = 0;
+	uint32_t kernel_msg = ((kernel == COMPAT_MSG) ? USER_MSG : kernel);
 
 	spin_lock(&fl->hlock);
 	if (fl->clst.num_active_ctxs > MAX_PENDING_CTX_PER_SESSION &&
-		!(kernel || invoke->handle < FASTRPC_STATIC_HANDLE_MAX)) {
+		!(kernel_msg || invoke->handle < FASTRPC_STATIC_HANDLE_MAX)) {
 		err = -EDQUOT;
 		spin_unlock(&fl->hlock);
 		goto bail;
@@ -1196,12 +1196,7 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 	ctx->overs = (struct overlap *)(&ctx->attrs[bufs]);
 	ctx->overps = (struct overlap **)(&ctx->overs[bufs]);
 
-	/* If user message, do not use copy_from_user to copy buffers for
-	 * compat driver,as memory is already copied to kernel memory
-	 * for compat driver
-	 */
-	is_kernel_memory = ((kernel == USER_MSG) ? (fl->is_compat) : kernel);
-	K_COPY_FROM_USER(err, is_kernel_memory, (void *)ctx->lpra, invoke->pra,
+	K_COPY_FROM_USER(err, kernel, (void *)ctx->lpra, invoke->pra,
 							bufs * sizeof(*ctx->lpra));
 	if (err) {
 		ADSPRPC_ERR(
@@ -1280,7 +1275,15 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 
 	spin_lock_irqsave(&chan->ctxlock, irq_flags);
 	me->jobid[domain]++;
-	for (ii = ((kernel || ctx->handle < FASTRPC_STATIC_HANDLE_MAX)
+
+	/*
+	 * To prevent user invocations from exhausting all entries in context
+	 * table, it is necessary to reserve a few context table entries for
+	 * critical kernel and static RPC calls. The index will begin at 0 for
+	 * static handles, while user handles start from
+	 * NUM_KERNEL_AND_STATIC_ONLY_CONTEXTS.
+	 */
+	for (ii = ((kernel_msg || ctx->handle < FASTRPC_STATIC_HANDLE_MAX)
 				? 0 : NUM_KERNEL_AND_STATIC_ONLY_CONTEXTS);
 				ii < FASTRPC_CTX_MAX; ii++) {
 		if (!chan->ctxtable[ii]) {
@@ -1506,7 +1509,6 @@ struct vfastrpc_file *hfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->is_ramdump_pend = false;
 	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 	fl->is_unsigned_pd = false;
-	fl->is_compat = false;
 	fl->exit_notif = false;
 	fl->exit_async = false;
 	fl->set_session_info = false;
@@ -2316,7 +2318,7 @@ bail:
 }
 
 int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
-				uint32_t kernel,
+				uint32_t msg_type,
 				struct fastrpc_ioctl_invoke_async *inv)
 {
 	struct vfastrpc_invoke_ctx *ctx = NULL;
@@ -2326,6 +2328,7 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 	struct timespec64 invoket = {0};
 	uint64_t *perf_counter = NULL;
 	bool isasyncinvoke = false, isworkdone = false;
+	uint32_t kernel = (msg_type == COMPAT_MSG) ? USER_MSG : msg_type;
 
 	ADSP_LOG("start pid=%d,tid=%d,sc=%x,h=%x\n",
 			fl->tgid, current->pid, inv->inv.sc, inv->inv.handle);
@@ -2352,9 +2355,6 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 				domain, invoke->handle);
 			goto bail;
 		}
-	}
-
-	if (!kernel) {
 		VERIFY(err, 0 == (err = context_restore_interrupted(vfl,
 		inv, &ctx)));
 		if (err)
@@ -2363,7 +2363,7 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 			goto wait;
 	}
 
-	VERIFY(err, 0 == (err = context_alloc(vfl, kernel, inv, &ctx)));
+	VERIFY(err, 0 == (err = context_alloc(vfl, msg_type, inv, &ctx)));
 	if (err)
 		goto bail;
 	isasyncinvoke = (ctx->asyncjob.isasyncjob ? true : false);
@@ -2448,9 +2448,9 @@ invoke_end:
 }
 
 static int hfastrpc_invoke(struct vfastrpc_file *vfl,
-			uint32_t mode, struct fastrpc_ioctl_invoke_async *inv)
+			uint32_t mode, struct fastrpc_ioctl_invoke_async *inv, uint32_t msg_type)
 {
-	return hfastrpc_internal_invoke(vfl, mode, USER_MSG, inv);
+	return hfastrpc_internal_invoke(vfl, mode, msg_type, inv);
 }
 
 static int hfastrpc_get_async_response(
@@ -2573,7 +2573,7 @@ bail:
 }
 
 static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
-				struct fastrpc_ioctl_invoke2 *inv2)
+				struct fastrpc_ioctl_invoke2 *inv2, bool is_compat)
 {
 	union {
 		struct fastrpc_ioctl_invoke_async inv;
@@ -2583,7 +2583,7 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 	} p;
 	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	uint32_t size = 0;
+	uint32_t size = 0, msg_type = 0;
 	int err = 0, domain = vfl->domain;
 
 	if (inv2->req == FASTRPC_INVOKE2_ASYNC ||
@@ -2608,12 +2608,13 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 			goto bail;
 		}
 
-		K_COPY_FROM_USER(err, fl->is_compat, &p.inv, (void *)inv2->invparam, size);
+		K_COPY_FROM_USER(err, is_compat, &p.inv, (void *)inv2->invparam, size);
 		if (err)
 			goto bail;
 
+		msg_type = (is_compat) ? COMPAT_MSG : USER_MSG;
 		VERIFY(err, 0 == (err = hfastrpc_internal_invoke(vfl, fl->mode,
-					USER_MSG, &p.inv)));
+					msg_type, &p.inv)));
 		if (err)
 			goto bail;
 		break;
@@ -2647,7 +2648,7 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 			err = -EBADE;
 			goto bail;
 		}
-		K_COPY_FROM_USER(err, fl->is_compat, &p.sess_info,
+		K_COPY_FROM_USER(err, is_compat, &p.sess_info,
 					 (void *)inv2->invparam, inv2->size);
 		if (err)
 			goto bail;
