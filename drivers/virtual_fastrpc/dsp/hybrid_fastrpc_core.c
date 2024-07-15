@@ -52,6 +52,9 @@
  */
 #define NUM_KERNEL_AND_STATIC_ONLY_CONTEXTS (70)
 
+/* Max no. of persistent headers pre-allocated per process */
+#define MAX_PERSISTENT_HEADERS    (25)
+
 /* FastRPC remote subsystem state*/
 enum fastrpc_remote_subsys_state {
 	SUBSYSTEM_RESTARTING = 0,
@@ -295,6 +298,7 @@ static int hfastrpc_channel_open(struct vfastrpc_file *vfl, uint32_t flags)
 
 	err = verify_transport_device(domain, fl->tvm_remote_domain);
 	if (err) {
+		ADSPRPC_ERR("transport layer is not ready\n");
 		err = -ECONNREFUSED;
 		goto bail;
 	}
@@ -1559,6 +1563,10 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	hfastrpc_context_list_dtor(vfl);
 	hfastrpc_cached_buf_list_free(vfl);
 	hfastrpc_remote_buf_list_free(vfl);
+	if (!IS_ERR_OR_NULL(vfl->hdr_bufs))
+		kfree(vfl->hdr_bufs);
+	if (!IS_ERR_OR_NULL(vfl->pers_hdr_buf))
+		hfastrpc_buf_free(vfl->pers_hdr_buf, 0);
 
 	mutex_lock(&fl->map_mutex);
 	do {
@@ -2570,6 +2578,79 @@ bail:
 	return err;
 }
 
+static int hfastrpc_create_persistent_headers(struct vfastrpc_file *vfl,
+			uint32_t user_concurrency)
+{
+	struct fastrpc_file* fl = to_fastrpc_file(vfl);
+	int err = 0, i = 0;
+	uint64_t va_base = 0;
+	struct vfastrpc_buf *pers_hdr_buf = NULL, *hdr_bufs = NULL, *buf = NULL;
+	unsigned int num_pers_hdrs = 0;
+	size_t hdr_buf_alloc_len = 0;
+
+	if (vfl->pers_hdr_buf || !user_concurrency)
+		goto bail;
+
+	/*
+	 * Pre-allocate memory for persistent header buffers based
+	 * on concurrency info passed by user. Upper limit enforced.
+	 */
+	num_pers_hdrs = (user_concurrency > MAX_PERSISTENT_HEADERS) ?
+		MAX_PERSISTENT_HEADERS : user_concurrency;
+	hdr_buf_alloc_len = num_pers_hdrs * PAGE_SIZE;
+	err = hfastrpc_buf_alloc(vfl, hdr_buf_alloc_len, 0, 0,
+			VFASTRPC_BUF_TYPE_METADATA, PAGE_KERNEL, &pers_hdr_buf);
+	if (err)
+		goto bail;
+	va_base = ptr_to_uint64(pers_hdr_buf->va);
+
+	/* Map entire buffer on remote subsystem in single RPC call */
+	err = hfastrpc_mem_map_to_dsp(vfl, -1, 0, ADSP_MMAP_PERSIST_HDR, 0,
+			pers_hdr_buf->da, pers_hdr_buf->size,
+			&pers_hdr_buf->raddr);
+	if (err)
+		goto bail;
+
+	/* Divide and store as N chunks, each of 1 page size */
+	hdr_bufs = kcalloc(num_pers_hdrs, sizeof(struct vfastrpc_buf),
+				GFP_KERNEL);
+	if (!hdr_bufs) {
+		err = -ENOMEM;
+		goto bail;
+	}
+	spin_lock(&fl->hlock);
+	vfl->pers_hdr_buf = pers_hdr_buf;
+	vfl->num_pers_hdrs = num_pers_hdrs;
+	vfl->hdr_bufs = hdr_bufs;
+	for (i = 0; i < num_pers_hdrs; i++) {
+		buf = &vfl->hdr_bufs[i];
+		buf->vfl = vfl;
+		buf->va = uint64_to_ptr(va_base + (i * PAGE_SIZE));
+		buf->da = pers_hdr_buf->da + (i * PAGE_SIZE);
+		buf->size = PAGE_SIZE;
+		buf->dma_attr = pers_hdr_buf->dma_attr;
+		buf->flags = pers_hdr_buf->flags;
+		buf->type = pers_hdr_buf->type;
+		buf->pers_hdr_in_use = false;
+	}
+	spin_unlock(&fl->hlock);
+bail:
+	if (err) {
+		ADSPRPC_ERR(
+			"failed to map len %zu, flags %d, user concurrency %u, num headers %u with err %d\n",
+			hdr_buf_alloc_len, ADSP_MMAP_PERSIST_HDR,
+			user_concurrency, num_pers_hdrs, err);
+		vfl->pers_hdr_buf = NULL;
+		vfl->hdr_bufs = NULL;
+		vfl->num_pers_hdrs = 0;
+		if (!IS_ERR_OR_NULL(pers_hdr_buf))
+			hfastrpc_buf_free(pers_hdr_buf, 0);
+		if (!IS_ERR_OR_NULL(hdr_bufs))
+			kfree(hdr_bufs);
+	}
+	return err;
+}
+
 static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 				struct fastrpc_ioctl_invoke2 *inv2)
 {
@@ -2578,6 +2659,7 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 		struct fastrpc_ioctl_async_response async_res;
 		struct fastrpc_proc_sess_info sess_info;
 		struct fastrpc_ioctl_notif_rsp notif;
+		uint32_t user_concurrency;
 	} p;
 	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -2626,7 +2708,17 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 						(void *)inv2->invparam, vfl);
 		break;
 	case FASTRPC_INVOKE2_KERNEL_OPTIMIZATIONS:
-		err = -ENOTTY;
+		size = sizeof(uint32_t);
+		if (inv2->size != size) {
+			err = -EBADE;
+			goto bail;
+		}
+		K_COPY_FROM_USER(err, 0, &p.user_concurrency,
+				(void *)inv2->invparam, size);
+		if (err)
+			goto bail;
+		err = hfastrpc_create_persistent_headers(vfl,
+				p.user_concurrency);
 		break;
 	case FASTRPC_INVOKE2_STATUS_NOTIF:
 		VERIFY(err,
