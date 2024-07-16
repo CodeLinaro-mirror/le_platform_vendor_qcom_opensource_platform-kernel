@@ -197,9 +197,9 @@ struct vfastrpc_operations {
 			struct fastrpc_ioctl_mem_unmap *ud);
 	int (*setmode)(struct vfastrpc_file *vfl, unsigned long mode);
 	int (*invoke)(struct vfastrpc_file *vfl, uint32_t mode,
-			struct fastrpc_ioctl_invoke_async *inv);
+			struct fastrpc_ioctl_invoke_async *inv, uint32_t msg_type);
 	int (*invoke2)(struct vfastrpc_file *vfl,
-			struct fastrpc_ioctl_invoke2 *inv2);
+			struct fastrpc_ioctl_invoke2 *inv2, bool is_compat);
 	int (*dspsignal_cancel_wait)(struct vfastrpc_file *vfl,
 			struct fastrpc_ioctl_dspsignal_cancel_wait *cancel);
 	int (*dspsignal_wait)(struct vfastrpc_file *vfl,
