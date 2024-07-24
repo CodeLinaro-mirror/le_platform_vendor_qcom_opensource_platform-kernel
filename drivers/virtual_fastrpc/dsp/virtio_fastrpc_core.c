@@ -17,6 +17,7 @@
 #define SIZE_OF_MAPPING(nents) \
 	(sizeof(struct virt_fastrpc_mapping) + \
 		nents * sizeof(struct virt_fastrpc_sgl))
+#define PERF_V2_DSP_SUPPORT (128)
 
 enum virtio_fastrpc_invoke_attr {
 	/* bit0, 1: FE/BE crc enabled, 0: FE/BE crc disabled */
@@ -191,15 +192,12 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->init_mem = NULL;
 	fl->qos_request = 0;
 	fl->dsp_proc_init = 0;
-	fl->is_ramdump_pend = false;
 	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 	fl->is_unsigned_pd = false;
-	fl->is_compat = false;
 	fl->exit_notif = false;
 	fl->exit_async = false;
 	fl->set_session_info = false;
 	fl->multi_session_support = false;
-	init_completion(&fl->work);
 	init_completion(&fl->dma_invoke);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
 	mutex_init(&fl->internal_map_mutex);
@@ -454,7 +452,7 @@ static int context_restore_interrupted(struct vfastrpc_file *vfl,
 	return err;
 }
 
-static int context_alloc(struct vfastrpc_file *vfl, s64 seq_num,
+static int context_alloc(struct vfastrpc_file *vfl, uint32_t msg_type, s64 seq_num,
 			struct fastrpc_ioctl_invoke_async *invokefd,
 			struct vfastrpc_invoke_ctx **po)
 {
@@ -483,7 +481,7 @@ static int context_alloc(struct vfastrpc_file *vfl, s64 seq_num,
 	ctx->fds = (int *)(&ctx->lpra[bufs]);
 	ctx->attrs = (unsigned int *)(&ctx->fds[bufs]);
 
-	K_COPY_FROM_USER(err, fl->is_compat, (void *)ctx->lpra, invoke->pra,
+	K_COPY_FROM_USER(err, msg_type, (void *)ctx->lpra, invoke->pra,
 			bufs * sizeof(*ctx->lpra));
 	if (err)
 		goto bail;
@@ -975,7 +973,9 @@ static int put_args(struct vfastrpc_invoke_ctx *ctx)
 	if (ctx->crc && crclist && rpra)
 		K_COPY_TO_USER(err, 0, ctx->crc,
 				crclist, M_CRCLIST * sizeof(uint32_t));
-
+	if (ctx->perf_dsp && perf_dsp_list)
+	K_COPY_TO_USER(err, 0, ctx->perf_dsp,
+			perf_dsp_list, M_DSP_PERF_LIST * sizeof(uint64_t));
 bail:
 	return err;
 }
@@ -1039,7 +1039,7 @@ void vfastrpc_queue_completed_async_job(struct vfastrpc_invoke_ctx *ctx)
 }
 
 static int vfastrpc_internal_invoke(struct vfastrpc_file *vfl,
-			uint32_t mode, struct fastrpc_ioctl_invoke_async *inv)
+			uint32_t mode, struct fastrpc_ioctl_invoke_async *inv, uint32_t msg_type)
 {
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	struct fastrpc_ioctl_invoke *invoke = &inv->inv;
@@ -1078,7 +1078,7 @@ static int vfastrpc_internal_invoke(struct vfastrpc_file *vfl,
 	lseq_num = atomic64_fetch_add(1, &vfl->seq_num);
 	trace_fastrpc_internal_invoke_start(invoke->handle, invoke->sc, lseq_num);
 
-	VERIFY(err, 0 == context_alloc(vfl, lseq_num, inv, &ctx));
+	VERIFY(err, 0 == context_alloc(vfl, msg_type, lseq_num, inv, &ctx));
 	if (err)
 		goto bail;
 	isasyncinvoke = (ctx->asyncjob.isasyncjob ? true : false);
@@ -2239,6 +2239,7 @@ static int vfastrpc_get_info_from_kernel(struct vfastrpc_file *vfl,
 
 		/* WA for async invoke support, need to be removed later */
 		dsp_cap_ptr->dsp_attributes[ASYNC_FASTRPC_CAP] = 1;
+		dsp_cap_ptr->dsp_attributes[PERF_V2_DSP_SUPPORT] = 1 << 1;
 
 		memcpy(&cap->capability,
 			&dsp_cap_ptr->dsp_attributes[attribute_ID],
@@ -2338,7 +2339,7 @@ bail:
 
 
 static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
-				struct fastrpc_ioctl_invoke2 *inv2)
+				struct fastrpc_ioctl_invoke2 *inv2, bool is_compat)
 {
 	union {
 		struct fastrpc_ioctl_invoke_async inv;
@@ -2347,7 +2348,7 @@ static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
 	} p;
 	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	uint32_t size = 0;
+	uint32_t size = 0, msg_type = 0;
 	int err = 0, domain = vfl->domain;
 
 	if (inv2->req == FASTRPC_INVOKE2_ASYNC ||
@@ -2376,8 +2377,9 @@ static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
 		if (err)
 			goto bail;
 
+		msg_type = (is_compat) ? COMPAT_MSG : USER_MSG;
 		VERIFY(err, 0 == (err = vfastrpc_internal_invoke(vfl, fl->mode,
-						&p.inv)));
+						&p.inv, msg_type)));
 		if (err)
 			goto bail;
 		break;
@@ -2401,7 +2403,7 @@ static int vfastrpc_internal_invoke2(struct vfastrpc_file *vfl,
 			err = -EBADE;
 			goto bail;
 		}
-		K_COPY_FROM_USER(err, fl->is_compat, &p.sess_info,
+		K_COPY_FROM_USER(err, is_compat, &p.sess_info,
 		(void *)inv2->invparam, inv2->size);
 		if (err)
 			goto bail;

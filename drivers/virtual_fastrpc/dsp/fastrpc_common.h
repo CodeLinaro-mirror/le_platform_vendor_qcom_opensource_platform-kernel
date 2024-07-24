@@ -28,8 +28,6 @@
 #define PID_SIZE			10
 #define FASTRPC_MSG_MAX			256
 
-#define CDSP1_DOMAIN_ID			4
-
 /* fastRPC DSP firmware capability */
 #define UNSIGNED_PD_SUPPORT		1
 
@@ -199,9 +197,9 @@ struct vfastrpc_operations {
 			struct fastrpc_ioctl_mem_unmap *ud);
 	int (*setmode)(struct vfastrpc_file *vfl, unsigned long mode);
 	int (*invoke)(struct vfastrpc_file *vfl, uint32_t mode,
-			struct fastrpc_ioctl_invoke_async *inv);
+			struct fastrpc_ioctl_invoke_async *inv, uint32_t msg_type);
 	int (*invoke2)(struct vfastrpc_file *vfl,
-			struct fastrpc_ioctl_invoke2 *inv2);
+			struct fastrpc_ioctl_invoke2 *inv2, bool is_compat);
 	int (*dspsignal_cancel_wait)(struct vfastrpc_file *vfl,
 			struct fastrpc_ioctl_dspsignal_cancel_wait *cancel);
 	int (*dspsignal_wait)(struct vfastrpc_file *vfl,
@@ -306,7 +304,7 @@ struct vfastrpc_channel_ctx {
 	uint64_t sesscount;
 	uint64_t ssrcount;
 	int in_hib;
-	uint64_t prevssrcount;
+	void *handle;
 	struct notifier_block nb;
 	int subsystemstate;
 

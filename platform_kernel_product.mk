@@ -2,6 +2,7 @@
 ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4), true)
 # Drivers for both Metal and GVM
     PRODUCT_PACKAGES += wallpower_charger.ko
+    PRODUCT_PACKAGES += boot_marker.ko
 
 ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for Metal only

@@ -584,6 +584,13 @@ static int virt_smmu_unmap(struct vfastrpc_file *vfl, uint64_t da)
 	struct virt_fastrpc_msg *msg;
 	int err, total_size;
 
+	spin_lock(&fl->hlock);
+	if (fl->file_close >= FASTRPC_PROCESS_EXIT_START) {
+		spin_unlock(&fl->hlock);
+		return -ESHUTDOWN;
+	}
+	spin_unlock(&fl->hlock);
+
 	total_size = sizeof(*vmsg) + sizeof(uint64_t);
 
 	msg = virt_alloc_msg(vfl, total_size);
