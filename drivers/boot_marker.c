@@ -21,7 +21,11 @@
 #include <soc/qcom/qcom_stats.h>
 #include <linux/hashtable.h>
 
-void place_marker(const char *name);
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+#include <linux/bootmarker_kernel.h>
+#endif
+
+int place_marker(const char *name);
 void destroy_marker_kernel(const char *name);
 unsigned long long msm_timer_get_sclk_ticks_kernel(void);
 static inline int boot_marker_enabled(void) { return 1; }
@@ -260,9 +264,10 @@ static void boot_marker_cleanup(void)
 	spin_unlock(&boot_marker_list.slock);
 }
 
-void place_marker(const char *name)
+int place_marker(const char *name)
 {
 	_create_boot_marker((char *)name, msm_timer_get_sclk_ticks_kernel());
+	return 0;
 }
 EXPORT_SYMBOL(place_marker);
 
@@ -528,6 +533,17 @@ static void print_boot_marker(void)
 	pr_info("KPI: Kernel MPM Clock frequency = %u\n",
 		mpm_counter_freq);
 }
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+	const static struct bootmarker_drv_ops bootmarker_driver_ops = {
+        	 .bootmarker_place_marker =  place_marker,
+	};
+
+	int get_bootmarker_kernel_fun_ops(void)
+	{
+		return provide_bootmarker_kernel_fun_ops(&bootmarker_driver_ops);
+	}
+
+#endif
 
 static int __init boot_marker_init(void)
 {
@@ -552,6 +568,15 @@ static int __init boot_marker_init(void)
 		iounmap(mpm_counter_base);
 	}
 
+
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+
+	/*If the api fails to get the func ops, print the error and continue
+	 * Do not treat it as fatal*/
+	ret = get_bootmarker_kernel_fun_ops();
+	if (ret)
+		pr_err("failed to provide bootmarker ops %d", ret);
+#endif
 	return 0;
 }
 module_init(boot_marker_init);
