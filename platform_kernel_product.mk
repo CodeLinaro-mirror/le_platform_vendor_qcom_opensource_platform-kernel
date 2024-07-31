@@ -19,6 +19,8 @@ else
 ifneq ($(TARGET_USES_GY), true)
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
     PRODUCT_PACKAGES += vm-cpufreq.ko
+else
+    PRODUCT_PACKAGES += virtio_ssr.ko
 endif
 ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
     PRODUCT_PACKAGES += vfastrpc.ko
