@@ -9,6 +9,7 @@ QCOM_ADSP_VOTE_SMP2P_SELECT := CONFIG_QCOM_ADSP_VOTE_SMP2P=m
 CPUFREQ_VM_SELECT := CONFIG_CPUFREQ_VM=m
 MSM_S2R_WAKEUP_MARKER := CONFIG_MSM_S2R_WAKEUP_MARKER=m
 MSM_BOOT_MARKER := CONFIG_MSM_BOOT_MARKER=m
+QCOM_SUBSYS_STATUS := CONFIG_QCOM_SUBSYS_STATUS=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -199,6 +200,9 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
+###########################################################
+KBUILD_OPTIONS += MODNAME=subsystem_status
+KBUILD_OPTIONS += $(QCOM_SUBSYS_STATUS)
 ###########################################################
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
