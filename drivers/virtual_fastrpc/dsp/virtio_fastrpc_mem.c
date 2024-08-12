@@ -805,6 +805,14 @@ void hfastrpc_buf_free(struct vfastrpc_buf *buf, int cache)
 	if (!vfl || !fl)
 		return;
 
+	if (buf->pers_hdr_in_use) {
+		/* Don't free persistent header buf. Just mark as available */
+		spin_lock(&fl->hlock);
+		buf->pers_hdr_in_use = false;
+		spin_unlock(&fl->hlock);
+		return;
+	}
+
 	if (cache && buf->size < MAX_CACHE_BUF_SIZE) {
 		spin_lock(&fl->hlock);
 		if (fl->num_cached_buf > MAX_CACHED_BUFS) {
@@ -834,37 +842,91 @@ skip_buf_cache:
 	kfree(buf);
 }
 
+static inline bool hfastrpc_get_cached_buf(struct vfastrpc_file *vfl,
+		size_t size, int buf_type, struct vfastrpc_buf **obuf)
+{
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	bool found = false;
+	struct vfastrpc_buf *buf = NULL, *fr = NULL;
+	struct hlist_node *n = NULL;
+
+	if (buf_type == VFASTRPC_BUF_TYPE_USERHEAP)
+		goto bail;
+
+	/* find the smallest buffer that fits in the cache */
+	spin_lock(&fl->hlock);
+	hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
+		if (buf->size >= size && (!fr || fr->size > buf->size))
+			fr = buf;
+	}
+	if (fr) {
+		hlist_del_init(&fr->hn);
+		fl->num_cached_buf--;
+	}
+	spin_unlock(&fl->hlock);
+	if (fr) {
+		fr->type = buf_type;
+		*obuf = fr;
+		found = true;
+	}
+bail:
+	return found;
+}
+
+static inline bool hfastrpc_get_persistent_buf(struct vfastrpc_file *vfl,
+		size_t size, int buf_type, struct vfastrpc_buf **obuf)
+{
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	unsigned int i = 0;
+	bool found = false;
+	struct vfastrpc_buf *buf = NULL;
+
+	spin_lock(&fl->hlock);
+	if (!vfl->num_pers_hdrs)
+		goto bail;
+
+	/*
+	 * Persistent header buffer can be used only if
+	 * metadata length is no more than 1 page size.
+	 */
+	if (buf_type != VFASTRPC_BUF_TYPE_METADATA || size > PAGE_SIZE)
+		goto bail;
+
+	for (i = 0; i < vfl->num_pers_hdrs; i++) {
+		buf = &vfl->hdr_bufs[i];
+		/* If buffer not in use, then assign it for requested alloc */
+		if (!buf->pers_hdr_in_use) {
+			buf->pers_hdr_in_use = true;
+			*obuf = buf;
+			found = true;
+			break;
+		}
+	}
+bail:
+	spin_unlock(&fl->hlock);
+	return found;
+}
+
 int hfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				unsigned long dma_attr, uint32_t rflags,
 				int buf_type, pgprot_t prot, struct vfastrpc_buf **obuf)
 {
 	struct vfastrpc_apps *me = vfl->apps;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	struct vfastrpc_buf *buf = NULL, *fr = NULL;
-	struct hlist_node *n;
+	struct vfastrpc_buf *buf = NULL;
 	int err = 0;
 
-	VERIFY(err, size > 0);
-	if (err)
+	VERIFY(err, size > 0 && size < MAX_BUF_SIZE);
+	if (err) {
+		ADSPRPC_ERR("Invalid buffer size, 0x%llx\n", size);
+		goto bail;
+	}
+
+	if (hfastrpc_get_persistent_buf(vfl, size, buf_type, obuf))
 		goto bail;
 
-	if (buf_type != VFASTRPC_BUF_TYPE_USERHEAP) {
-		/* find the smallest buffer that fits in the cache */
-		spin_lock(&fl->hlock);
-		hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
-			if (buf->size >= size && (!fr || fr->size > buf->size))
-				fr = buf;
-		}
-		if (fr) {
-			hlist_del_init(&fr->hn);
-			fl->num_cached_buf--;
-		}
-		spin_unlock(&fl->hlock);
-		if (fr) {
-			*obuf = fr;
-			return 0;
-		}
-	}
+	if (hfastrpc_get_cached_buf(vfl, size, buf_type, obuf))
+		goto bail;
 
 	VERIFY(err, NULL != (buf = kzalloc(sizeof(*buf), GFP_KERNEL)));
 	if (err)
