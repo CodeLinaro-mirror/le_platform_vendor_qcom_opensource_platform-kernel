@@ -11,7 +11,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATF
     PRODUCT_PACKAGES += silent-mode-hw-monitoring.ko
     PRODUCT_PACKAGES += dump_boot_log.ko
     PRODUCT_PACKAGES += s2r_wakeup_marker.ko
-
+    PRODUCT_PACKAGES += subsystem_status.ko
 else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
