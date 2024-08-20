@@ -932,7 +932,12 @@ int hfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 	if (err)
 		goto bail;
 	buf->vfl = vfl;
-	buf->size = size;
+	/*
+	 * For buf_type that could be cached, we save the page-aligned size,
+	 * because the buffer allocation is page-aligned underline and the
+	 * entire buffer is reusable.
+	 */
+	buf->size = (buf_type == VFASTRPC_BUF_TYPE_USERHEAP) ? size : PAGE_ALIGN(size);
 	buf->va = NULL;
 	buf->dma_attr = dma_attr;
 	buf->map_attr = 0;
