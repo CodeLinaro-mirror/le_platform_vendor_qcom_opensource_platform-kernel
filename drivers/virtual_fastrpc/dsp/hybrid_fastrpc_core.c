@@ -1700,16 +1700,17 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 			err = hfastrpc_mmap_create(vfl, ctx->fds[i],
 					FASTRPC_ATTR_NOVA, 0, 0, dmaflags,
 					&ctx->maps[i]);
-		if (!err && ctx->maps[i])
-			ctx->maps[i]->ctx_refs++;
 		if (err) {
 			for (j = bufs; j < i; j++) {
-				if (ctx->maps[j] && ctx->maps[j]->ctx_refs)
-					ctx->maps[j]->ctx_refs--;
-				hfastrpc_mmap_free(vfl, ctx->maps[j], 0);
+				if (ctx->maps[j] && ctx->maps[j]->dma_handle_refs) {
+					ctx->maps[j]->dma_handle_refs--;
+					hfastrpc_mmap_free(vfl, ctx->maps[j], 0);
+				}
 			}
 			mutex_unlock(&fl->map_mutex);
 			goto bail;
+		} else if (ctx->maps[i]) {
+			ctx->maps[i]->dma_handle_refs++;
 		}
 		ipage += 1;
 	}
@@ -1850,14 +1851,32 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 		rpra[i].buf.pv = buf;
 	}
 	PERF_END);
+	/* Since we are not holidng map_mutex during get args whole time
+	 * it is possible that dma handle map may be removed by some invalid
+	 * fd passed by DSP. Inside the lock check if the map present or not
+	 */
+	mutex_lock(&fl->map_mutex);
 	for (i = bufs; i < bufs + handles; ++i) {
-		struct vfastrpc_mmap *map = ctx->maps[i];
-
-		if (map) {
-			pages[i].addr = map->da;
-			pages[i].size = map->size;
+		struct vfastrpc_mmap *mmap = NULL;
+		/* check if map  was created */
+		if (ctx->maps[i]) {
+			/* check if map still exist */
+			if (!vfastrpc_mmap_find(ctx->vfl, ctx->fds[i], 0, 0,
+				0, 0, &mmap)) {
+				if (mmap) {
+					pages[i].addr = mmap->da;
+					pages[i].size = mmap->size;
+				}
+			} else {
+				/* map already freed by some other call */
+				mutex_unlock(&fl->map_mutex);
+				ADSPRPC_ERR("could not find map associated with dma hadle fd %d \n",
+					ctx->fds[i]);
+				goto bail;
+			}
 		}
 	}
+	mutex_unlock(&fl->map_mutex);
 	fdlist = (uint64_t *)&pages[bufs + handles];
 	crclist = (uint32_t *)&fdlist[M_FDLIST];
 	/* reset fds, crc and early wakeup hint memory */
@@ -1988,9 +2007,10 @@ static int put_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx,
 			break;
 		if (!vfastrpc_mmap_find(vfl, (int)fdlist[i], 0, 0,
 					0, 0, &mmap)) {
-			if (mmap && mmap->ctx_refs)
-				mmap->ctx_refs--;
-			hfastrpc_mmap_free(vfl, mmap, 0);
+			if (mmap && mmap->dma_handle_refs) {
+				mmap->dma_handle_refs = 0;
+				hfastrpc_mmap_free(vfl, mmap, 0);
+			}
 		}
 	}
 	mutex_unlock(&fl->map_mutex);
