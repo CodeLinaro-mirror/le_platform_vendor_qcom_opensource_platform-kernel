@@ -17,6 +17,7 @@
 #define SIZE_OF_MAPPING(nents) \
 	(sizeof(struct virt_fastrpc_mapping) + \
 		nents * sizeof(struct virt_fastrpc_sgl))
+#define PERF_V2_DSP_SUPPORT (128)
 
 enum virtio_fastrpc_invoke_attr {
 	/* bit0, 1: FE/BE crc enabled, 0: FE/BE crc disabled */
@@ -191,14 +192,12 @@ struct vfastrpc_file *vfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->init_mem = NULL;
 	fl->qos_request = 0;
 	fl->dsp_proc_init = 0;
-	fl->is_ramdump_pend = false;
 	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 	fl->is_unsigned_pd = false;
 	fl->exit_notif = false;
 	fl->exit_async = false;
 	fl->set_session_info = false;
 	fl->multi_session_support = false;
-	init_completion(&fl->work);
 	init_completion(&fl->dma_invoke);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
 	mutex_init(&fl->internal_map_mutex);
@@ -634,16 +633,21 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			attrs[i] &= ~FASTRPC_ATTR_KEEP_MAP;
 			err = vfastrpc_mmap_create(vfl, fds[i], attrs[i],
 					0, 0, dmaflags, &maps[i]);
-			if (!err && maps[i])
-				maps[i]->ctx_refs++;
 			if (err) {
 				for (j = bufs; j < i; j++) {
-					if (maps[j] && maps[j]->ctx_refs)
-						maps[j]->ctx_refs--;
-					vfastrpc_mmap_free(vfl, maps[j], 0);
+					if (maps[j] && maps[j]->dma_handle_refs) {
+						maps[j]->dma_handle_refs--;
+						vfastrpc_mmap_free(vfl, maps[j], 0);
+					}
 				}
 				mutex_unlock(&fl->map_mutex);
 				goto bail;
+			} else if (maps[i]) {
+				/*
+				 * Increment  refs count for in/out handle if map created
+				 * and no error, indicate map under use in remote call
+				 */
+				maps[i]->dma_handle_refs++;
 			}
 			handlelen += SIZE_OF_MAPPING(maps[i]->table->nents);
 		}
@@ -965,16 +969,19 @@ static int put_args(struct vfastrpc_invoke_ctx *ctx)
 			break;
 		if (!vfastrpc_mmap_find(vfl, (int)fdlist[i], 0, 0,
 					0, 0, &mmap)) {
-			if (mmap && mmap->ctx_refs)
-				mmap->ctx_refs--;
-			vfastrpc_mmap_free(vfl, mmap, 0);
+			if (mmap && mmap->dma_handle_refs) {
+				mmap->dma_handle_refs = 0;
+				vfastrpc_mmap_free(vfl, mmap, 0);
+			}
 		}
 	}
 	mutex_unlock(&fl->map_mutex);
 	if (ctx->crc && crclist && rpra)
 		K_COPY_TO_USER(err, 0, ctx->crc,
 				crclist, M_CRCLIST * sizeof(uint32_t));
-
+	if (ctx->perf_dsp && perf_dsp_list)
+	K_COPY_TO_USER(err, 0, ctx->perf_dsp,
+			perf_dsp_list, M_DSP_PERF_LIST * sizeof(uint64_t));
 bail:
 	return err;
 }
@@ -2238,6 +2245,7 @@ static int vfastrpc_get_info_from_kernel(struct vfastrpc_file *vfl,
 
 		/* WA for async invoke support, need to be removed later */
 		dsp_cap_ptr->dsp_attributes[ASYNC_FASTRPC_CAP] = 1;
+		dsp_cap_ptr->dsp_attributes[PERF_V2_DSP_SUPPORT] = 1 << 1;
 
 		memcpy(&cap->capability,
 			&dsp_cap_ptr->dsp_attributes[attribute_ID],

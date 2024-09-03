@@ -95,7 +95,7 @@ static void subsystem_notif_wq_func(struct work_struct *work)
 
 	ret = qcom_notify_ssr_clients(subsystem_handle, state, NULL);
 	writel_relaxed(ret, base_reg + subsystem->offset + CLIENT_STATE_OFFSET);
-	pr_info("%s: receive %s interrupt with state: %d ret: %d\n", __func__, subsystem->name, state, ret);
+	pr_debug("%s: receive %s interrupt with state: %d ret: %d\n", __func__, subsystem->name, state, ret);
 }
 
 static int subsystem_state_callback(struct notifier_block *this,

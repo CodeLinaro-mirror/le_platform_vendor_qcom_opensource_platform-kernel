@@ -89,7 +89,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x5
+#define FE_MINOR_VER 0x7
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -131,6 +131,12 @@ static struct vfastrpc_channel_ctx gcinfo[NUM_CHANNELS] = {
 	{
 		.name = "cdsprpc-smd",
 		.subsys = "cdsp",
+		.cpuinfo_todsp = FASTRPC_CPUINFO_EARLY_WAKEUP,
+		.cpuinfo_status = false,
+	},
+	{
+		.name = "cdsprpc1-smd",
+		.subsys = "cdsp1",
 		.cpuinfo_todsp = FASTRPC_CPUINFO_EARLY_WAKEUP,
 		.cpuinfo_status = false,
 	},
@@ -831,7 +837,6 @@ static int hfastrpc_init(void)
 		 * it will be used in SSR callback. */
 		mutex_init(&chan[i].smd_mutex);
 		chan[i].ssrcount = 0;
-		chan[i].prevssrcount = 0;
 		chan[i].in_hib = 0;
 		chan[i].sesscount = 0;
 		chan[i].subsystemstate = SUBSYSTEM_UP;

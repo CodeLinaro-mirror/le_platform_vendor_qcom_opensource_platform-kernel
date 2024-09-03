@@ -28,8 +28,6 @@
 #define PID_SIZE			10
 #define FASTRPC_MSG_MAX			256
 
-#define CDSP1_DOMAIN_ID			4
-
 /* fastRPC DSP firmware capability */
 #define UNSIGNED_PD_SUPPORT		1
 
@@ -228,6 +226,12 @@ struct vfastrpc_file {
 	struct hlist_head interrupted_cmds;
 	/* Unique sequence num inside a process to identify the invoke msg. */
 	atomic64_t seq_num;
+	/* No. of persistent headers */
+	unsigned int num_pers_hdrs;
+	/* Pre-allocated header buffer */
+	struct vfastrpc_buf *pers_hdr_buf;
+	/* Pre-allocated buffer divided into N chunks */
+	struct vfastrpc_buf *hdr_bufs;
 };
 
 struct vfastrpc_invoke_ctx {
@@ -307,7 +311,6 @@ struct vfastrpc_channel_ctx {
 	uint64_t ssrcount;
 	int in_hib;
 	void *handle;
-	uint64_t prevssrcount;
 	struct notifier_block nb;
 	int subsystemstate;
 

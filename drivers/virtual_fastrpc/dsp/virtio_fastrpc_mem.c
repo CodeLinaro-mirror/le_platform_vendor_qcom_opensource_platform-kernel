@@ -259,7 +259,9 @@ int vfastrpc_mmap_remove(struct vfastrpc_file *vfl, int fd,
 				 (map->refs == 2 &&
 				  map->attr & FASTRPC_ATTR_KEEP_MAP)) &&
 				/* Remove if only one reference map and no context map */
-				!map->ctx_refs) {
+				!map->ctx_refs &&
+				/* Remove map only if it isn't being used by DSP */
+				!map->dma_handle_refs) {
 			if (map->attr & FASTRPC_ATTR_KEEP_MAP)
 				map->refs--;
 			match = map;
@@ -312,21 +314,32 @@ void vfastrpc_mmap_free(struct vfastrpc_file *vfl,
 		dev_err(me->dev, "%s ADSP_MMAP_HEAP_ADDR is not supported\n",
 				__func__);
 	} else {
-		if (map->refs <= 0 || map->ctx_refs < 0) {
-			dev_warn(me->dev, "%s map refs = %d or ctx_refs = %d is abnormal\n",
-					__func__, map->refs, map->ctx_refs);
+		if (map->refs <= 0 || map->ctx_refs < 0 || map->dma_handle_refs < 0) {
+			dev_warn(me->dev,
+				"%s refs = %d ctx_refs = %d dma_handle_refs = %d is abnormal\n",
+				__func__, map->refs, map->ctx_refs, map->dma_handle_refs);
 			return;
 		}
 
 		map->refs--;
-		if ((map->refs || map->ctx_refs) && force_free) {
-			dev_warn(me->dev, "force free, refs = %d ctx_refs = %d attr = 0x%x\n",
-					map->refs + 1, map->ctx_refs, map->attr);
+		if (force_free) {
+			/*
+			 * We only allow force_free happen for DMA-BUF with FASTRPC_ATTR_KEEP_MAP
+			 * attribute set, because client could call remote_handle_close first,
+			 * then call rpcmem_free.
+			 */
+			if (map->refs || map->ctx_refs || map->dma_handle_refs ||
+					(map->refs == 0 && !(map->attr & FASTRPC_ATTR_KEEP_MAP)))
+				dev_warn(me->dev,
+					"force free, refs = %d ctx_refs = %d dma_handle_refs = %d attr = 0x%x\n",
+					map->refs + 1, map->ctx_refs, map->dma_handle_refs,
+					map->attr);
 			map->refs = 0;
 			map->ctx_refs = 0;
+			map->dma_handle_refs = 0;
 		}
 
-		if (!map->refs && !map->ctx_refs) {
+		if (!map->refs && !map->ctx_refs && !map->dma_handle_refs) {
 			hlist_del_init(&map->hn);
 			if (!IS_ERR_OR_NULL(map->table)) {
 				dma_buf_unmap_attachment(map->attach, map->table,
@@ -735,21 +748,32 @@ void hfastrpc_mmap_free(struct vfastrpc_file *vfl,
 		dev_err(me->dev, "%s ADSP_MMAP_HEAP_ADDR is not supported\n",
 				__func__);
 	} else {
-		if (map->refs <= 0 || map->ctx_refs < 0) {
-			dev_warn(me->dev, "%s map refs = %d or ctx_refs = %d is abnormal\n",
-					__func__, map->refs, map->ctx_refs);
+		if (map->refs <= 0 || map->ctx_refs < 0 || map->dma_handle_refs < 0) {
+			dev_warn(me->dev,
+				"%s refs = %d ctx_refs = %d dma_handle_refs = %d is abnormal\n",
+				__func__, map->refs, map->ctx_refs, map->dma_handle_refs);
 			return;
 		}
 
 		map->refs--;
-		if ((map->refs || map->ctx_refs) && force_free) {
-			dev_warn(me->dev, "force free, refs = %d ctx_refs = %d attr = 0x%x\n",
-					map->refs + 1, map->ctx_refs, map->attr);
+		if (force_free) {
+			/*
+			 * We only allow force_free happen for DMA-BUF with FASTRPC_ATTR_KEEP_MAP
+			 * attribute set, because client could call remote_handle_close first,
+			 * then call rpcmem_free.
+			 */
+			if (map->refs || map->ctx_refs || map->dma_handle_refs ||
+					(map->refs == 0 && !(map->attr & FASTRPC_ATTR_KEEP_MAP)))
+				dev_warn(me->dev,
+					"force free, refs = %d ctx_refs = %d dma_handle_refs = %d attr = 0x%x\n",
+					map->refs + 1, map->ctx_refs, map->dma_handle_refs,
+					map->attr);
 			map->refs = 0;
 			map->ctx_refs = 0;
+			map->dma_handle_refs = 0;
 		}
 
-		if (!map->refs && !map->ctx_refs) {
+		if (!map->refs && !map->ctx_refs && !map->dma_handle_refs) {
 			if (map->da)
 				virt_smmu_unmap(vfl, map->da);
 
@@ -805,6 +829,14 @@ void hfastrpc_buf_free(struct vfastrpc_buf *buf, int cache)
 	if (!vfl || !fl)
 		return;
 
+	if (buf->pers_hdr_in_use) {
+		/* Don't free persistent header buf. Just mark as available */
+		spin_lock(&fl->hlock);
+		buf->pers_hdr_in_use = false;
+		spin_unlock(&fl->hlock);
+		return;
+	}
+
 	if (cache && buf->size < MAX_CACHE_BUF_SIZE) {
 		spin_lock(&fl->hlock);
 		if (fl->num_cached_buf > MAX_CACHED_BUFS) {
@@ -834,43 +866,102 @@ skip_buf_cache:
 	kfree(buf);
 }
 
+static inline bool hfastrpc_get_cached_buf(struct vfastrpc_file *vfl,
+		size_t size, int buf_type, struct vfastrpc_buf **obuf)
+{
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	bool found = false;
+	struct vfastrpc_buf *buf = NULL, *fr = NULL;
+	struct hlist_node *n = NULL;
+
+	if (buf_type == VFASTRPC_BUF_TYPE_USERHEAP)
+		goto bail;
+
+	/* find the smallest buffer that fits in the cache */
+	spin_lock(&fl->hlock);
+	hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
+		if (buf->size >= size && (!fr || fr->size > buf->size))
+			fr = buf;
+	}
+	if (fr) {
+		hlist_del_init(&fr->hn);
+		fl->num_cached_buf--;
+	}
+	spin_unlock(&fl->hlock);
+	if (fr) {
+		fr->type = buf_type;
+		*obuf = fr;
+		found = true;
+	}
+bail:
+	return found;
+}
+
+static inline bool hfastrpc_get_persistent_buf(struct vfastrpc_file *vfl,
+		size_t size, int buf_type, struct vfastrpc_buf **obuf)
+{
+	struct fastrpc_file *fl = to_fastrpc_file(vfl);
+	unsigned int i = 0;
+	bool found = false;
+	struct vfastrpc_buf *buf = NULL;
+
+	spin_lock(&fl->hlock);
+	if (!vfl->num_pers_hdrs)
+		goto bail;
+
+	/*
+	 * Persistent header buffer can be used only if
+	 * metadata length is no more than 1 page size.
+	 */
+	if (buf_type != VFASTRPC_BUF_TYPE_METADATA || size > PAGE_SIZE)
+		goto bail;
+
+	for (i = 0; i < vfl->num_pers_hdrs; i++) {
+		buf = &vfl->hdr_bufs[i];
+		/* If buffer not in use, then assign it for requested alloc */
+		if (!buf->pers_hdr_in_use) {
+			buf->pers_hdr_in_use = true;
+			*obuf = buf;
+			found = true;
+			break;
+		}
+	}
+bail:
+	spin_unlock(&fl->hlock);
+	return found;
+}
+
 int hfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 				unsigned long dma_attr, uint32_t rflags,
 				int buf_type, pgprot_t prot, struct vfastrpc_buf **obuf)
 {
 	struct vfastrpc_apps *me = vfl->apps;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
-	struct vfastrpc_buf *buf = NULL, *fr = NULL;
-	struct hlist_node *n;
+	struct vfastrpc_buf *buf = NULL;
 	int err = 0;
 
-	VERIFY(err, size > 0);
-	if (err)
+	VERIFY(err, size > 0 && size < MAX_BUF_SIZE);
+	if (err) {
+		ADSPRPC_ERR("Invalid buffer size, 0x%llx\n", size);
+		goto bail;
+	}
+
+	if (hfastrpc_get_persistent_buf(vfl, size, buf_type, obuf))
 		goto bail;
 
-	if (buf_type != VFASTRPC_BUF_TYPE_USERHEAP) {
-		/* find the smallest buffer that fits in the cache */
-		spin_lock(&fl->hlock);
-		hlist_for_each_entry_safe(buf, n, &fl->cached_bufs, hn) {
-			if (buf->size >= size && (!fr || fr->size > buf->size))
-				fr = buf;
-		}
-		if (fr) {
-			hlist_del_init(&fr->hn);
-			fl->num_cached_buf--;
-		}
-		spin_unlock(&fl->hlock);
-		if (fr) {
-			*obuf = fr;
-			return 0;
-		}
-	}
+	if (hfastrpc_get_cached_buf(vfl, size, buf_type, obuf))
+		goto bail;
 
 	VERIFY(err, NULL != (buf = kzalloc(sizeof(*buf), GFP_KERNEL)));
 	if (err)
 		goto bail;
 	buf->vfl = vfl;
-	buf->size = size;
+	/*
+	 * For buf_type that could be cached, we save the page-aligned size,
+	 * because the buffer allocation is page-aligned underline and the
+	 * entire buffer is reusable.
+	 */
+	buf->size = (buf_type == VFASTRPC_BUF_TYPE_USERHEAP) ? size : PAGE_ALIGN(size);
 	buf->va = NULL;
 	buf->dma_attr = dma_attr;
 	buf->map_attr = 0;
