@@ -52,6 +52,9 @@
  */
 #define NUM_KERNEL_AND_STATIC_ONLY_CONTEXTS (70)
 
+/* Max no. of persistent headers pre-allocated per process */
+#define MAX_PERSISTENT_HEADERS    (25)
+
 /* FastRPC remote subsystem state*/
 enum fastrpc_remote_subsys_state {
 	SUBSYSTEM_RESTARTING = 0,
@@ -295,6 +298,7 @@ static int hfastrpc_channel_open(struct vfastrpc_file *vfl, uint32_t flags)
 
 	err = verify_transport_device(domain, fl->tvm_remote_domain);
 	if (err) {
+		ADSPRPC_ERR("transport layer is not ready\n");
 		err = -ECONNREFUSED;
 		goto bail;
 	}
@@ -1561,6 +1565,10 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	hfastrpc_context_list_dtor(vfl);
 	hfastrpc_cached_buf_list_free(vfl);
 	hfastrpc_remote_buf_list_free(vfl);
+	if (!IS_ERR_OR_NULL(vfl->hdr_bufs))
+		kfree(vfl->hdr_bufs);
+	if (!IS_ERR_OR_NULL(vfl->pers_hdr_buf))
+		hfastrpc_buf_free(vfl->pers_hdr_buf, 0);
 
 	mutex_lock(&fl->map_mutex);
 	do {
@@ -1692,16 +1700,17 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 			err = hfastrpc_mmap_create(vfl, ctx->fds[i],
 					FASTRPC_ATTR_NOVA, 0, 0, dmaflags,
 					&ctx->maps[i]);
-		if (!err && ctx->maps[i])
-			ctx->maps[i]->ctx_refs++;
 		if (err) {
 			for (j = bufs; j < i; j++) {
-				if (ctx->maps[j] && ctx->maps[j]->ctx_refs)
-					ctx->maps[j]->ctx_refs--;
-				hfastrpc_mmap_free(vfl, ctx->maps[j], 0);
+				if (ctx->maps[j] && ctx->maps[j]->dma_handle_refs) {
+					ctx->maps[j]->dma_handle_refs--;
+					hfastrpc_mmap_free(vfl, ctx->maps[j], 0);
+				}
 			}
 			mutex_unlock(&fl->map_mutex);
 			goto bail;
+		} else if (ctx->maps[i]) {
+			ctx->maps[i]->dma_handle_refs++;
 		}
 		ipage += 1;
 	}
@@ -1842,14 +1851,32 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 		rpra[i].buf.pv = buf;
 	}
 	PERF_END);
+	/* Since we are not holidng map_mutex during get args whole time
+	 * it is possible that dma handle map may be removed by some invalid
+	 * fd passed by DSP. Inside the lock check if the map present or not
+	 */
+	mutex_lock(&fl->map_mutex);
 	for (i = bufs; i < bufs + handles; ++i) {
-		struct vfastrpc_mmap *map = ctx->maps[i];
-
-		if (map) {
-			pages[i].addr = map->da;
-			pages[i].size = map->size;
+		struct vfastrpc_mmap *mmap = NULL;
+		/* check if map  was created */
+		if (ctx->maps[i]) {
+			/* check if map still exist */
+			if (!vfastrpc_mmap_find(ctx->vfl, ctx->fds[i], 0, 0,
+				0, 0, &mmap)) {
+				if (mmap) {
+					pages[i].addr = mmap->da;
+					pages[i].size = mmap->size;
+				}
+			} else {
+				/* map already freed by some other call */
+				mutex_unlock(&fl->map_mutex);
+				ADSPRPC_ERR("could not find map associated with dma hadle fd %d \n",
+					ctx->fds[i]);
+				goto bail;
+			}
 		}
 	}
+	mutex_unlock(&fl->map_mutex);
 	fdlist = (uint64_t *)&pages[bufs + handles];
 	crclist = (uint32_t *)&fdlist[M_FDLIST];
 	/* reset fds, crc and early wakeup hint memory */
@@ -1980,9 +2007,10 @@ static int put_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx,
 			break;
 		if (!vfastrpc_mmap_find(vfl, (int)fdlist[i], 0, 0,
 					0, 0, &mmap)) {
-			if (mmap && mmap->ctx_refs)
-				mmap->ctx_refs--;
-			hfastrpc_mmap_free(vfl, mmap, 0);
+			if (mmap && mmap->dma_handle_refs) {
+				mmap->dma_handle_refs = 0;
+				hfastrpc_mmap_free(vfl, mmap, 0);
+			}
 		}
 	}
 	mutex_unlock(&fl->map_mutex);
@@ -2570,6 +2598,79 @@ bail:
 	return err;
 }
 
+static int hfastrpc_create_persistent_headers(struct vfastrpc_file *vfl,
+			uint32_t user_concurrency)
+{
+	struct fastrpc_file* fl = to_fastrpc_file(vfl);
+	int err = 0, i = 0;
+	uint64_t va_base = 0;
+	struct vfastrpc_buf *pers_hdr_buf = NULL, *hdr_bufs = NULL, *buf = NULL;
+	unsigned int num_pers_hdrs = 0;
+	size_t hdr_buf_alloc_len = 0;
+
+	if (vfl->pers_hdr_buf || !user_concurrency)
+		goto bail;
+
+	/*
+	 * Pre-allocate memory for persistent header buffers based
+	 * on concurrency info passed by user. Upper limit enforced.
+	 */
+	num_pers_hdrs = (user_concurrency > MAX_PERSISTENT_HEADERS) ?
+		MAX_PERSISTENT_HEADERS : user_concurrency;
+	hdr_buf_alloc_len = num_pers_hdrs * PAGE_SIZE;
+	err = hfastrpc_buf_alloc(vfl, hdr_buf_alloc_len, 0, 0,
+			VFASTRPC_BUF_TYPE_METADATA, PAGE_KERNEL, &pers_hdr_buf);
+	if (err)
+		goto bail;
+	va_base = ptr_to_uint64(pers_hdr_buf->va);
+
+	/* Map entire buffer on remote subsystem in single RPC call */
+	err = hfastrpc_mem_map_to_dsp(vfl, -1, 0, ADSP_MMAP_PERSIST_HDR, 0,
+			pers_hdr_buf->da, pers_hdr_buf->size,
+			&pers_hdr_buf->raddr);
+	if (err)
+		goto bail;
+
+	/* Divide and store as N chunks, each of 1 page size */
+	hdr_bufs = kcalloc(num_pers_hdrs, sizeof(struct vfastrpc_buf),
+				GFP_KERNEL);
+	if (!hdr_bufs) {
+		err = -ENOMEM;
+		goto bail;
+	}
+	spin_lock(&fl->hlock);
+	vfl->pers_hdr_buf = pers_hdr_buf;
+	vfl->num_pers_hdrs = num_pers_hdrs;
+	vfl->hdr_bufs = hdr_bufs;
+	for (i = 0; i < num_pers_hdrs; i++) {
+		buf = &vfl->hdr_bufs[i];
+		buf->vfl = vfl;
+		buf->va = uint64_to_ptr(va_base + (i * PAGE_SIZE));
+		buf->da = pers_hdr_buf->da + (i * PAGE_SIZE);
+		buf->size = PAGE_SIZE;
+		buf->dma_attr = pers_hdr_buf->dma_attr;
+		buf->flags = pers_hdr_buf->flags;
+		buf->type = pers_hdr_buf->type;
+		buf->pers_hdr_in_use = false;
+	}
+	spin_unlock(&fl->hlock);
+bail:
+	if (err) {
+		ADSPRPC_ERR(
+			"failed to map len %zu, flags %d, user concurrency %u, num headers %u with err %d\n",
+			hdr_buf_alloc_len, ADSP_MMAP_PERSIST_HDR,
+			user_concurrency, num_pers_hdrs, err);
+		vfl->pers_hdr_buf = NULL;
+		vfl->hdr_bufs = NULL;
+		vfl->num_pers_hdrs = 0;
+		if (!IS_ERR_OR_NULL(pers_hdr_buf))
+			hfastrpc_buf_free(pers_hdr_buf, 0);
+		if (!IS_ERR_OR_NULL(hdr_bufs))
+			kfree(hdr_bufs);
+	}
+	return err;
+}
+
 static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 				struct fastrpc_ioctl_invoke2 *inv2, bool is_compat)
 {
@@ -2578,6 +2679,7 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 		struct fastrpc_ioctl_async_response async_res;
 		struct fastrpc_proc_sess_info sess_info;
 		struct fastrpc_ioctl_notif_rsp notif;
+		uint32_t user_concurrency;
 	} p;
 	struct fastrpc_dsp_capabilities *dsp_cap_ptr = NULL;
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
@@ -2627,7 +2729,17 @@ static int hfastrpc_invoke2(struct vfastrpc_file *vfl,
 						(void *)inv2->invparam, vfl);
 		break;
 	case FASTRPC_INVOKE2_KERNEL_OPTIMIZATIONS:
-		err = -ENOTTY;
+		size = sizeof(uint32_t);
+		if (inv2->size != size) {
+			err = -EBADE;
+			goto bail;
+		}
+		K_COPY_FROM_USER(err, 0, &p.user_concurrency,
+				(void *)inv2->invparam, size);
+		if (err)
+			goto bail;
+		err = hfastrpc_create_persistent_headers(vfl,
+				p.user_concurrency);
 		break;
 	case FASTRPC_INVOKE2_STATUS_NOTIF:
 		VERIFY(err,
