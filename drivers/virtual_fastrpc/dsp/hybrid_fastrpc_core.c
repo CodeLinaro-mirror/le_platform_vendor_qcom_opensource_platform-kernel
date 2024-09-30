@@ -1543,12 +1543,12 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	fl->file_close = FASTRPC_PROCESS_EXIT_START;
 	spin_unlock(&fl->hlock);
 
-	debugfs_remove(fl->debugfs_file);
-	kfree(fl->debug_buf);
-
 	/* This cmd is only required when PD is opened on DSP */
 	if (fl->dsp_proc_init == 1)
 		virt_fastrpc_close(vfl);
+
+	debugfs_remove(fl->debugfs_file);
+	kfree(fl->debug_buf);
 
 	/* Dummy wake up to exit Async worker thread */
 	spin_lock_irqsave(&fl->aqlock, flags);
