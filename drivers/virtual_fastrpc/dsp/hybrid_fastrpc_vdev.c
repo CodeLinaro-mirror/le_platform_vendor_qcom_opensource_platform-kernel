@@ -187,6 +187,8 @@ static ssize_t hfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 				"\n%s %d %s %d %s 0x%lx\n", "tgid_frpc =",
 				fl->tgid_frpc, "sessionid =", fl->sessionid,
 				"upid =", vfl->upid);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d\n", "file_close =", fl->file_close);
 
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
