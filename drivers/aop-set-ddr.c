@@ -8,6 +8,7 @@
 #include <linux/mailbox_client.h>
 #include <linux/mailbox/qmp.h>
 #include <linux/platform_device.h>
+#include <linux/version.h>
 
 #define MAX_MSG_SIZE 96 /* Imposed by the remote */
 
@@ -74,12 +75,18 @@ static int set_ddr_freq_probe(struct platform_device *pdev)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+static void set_ddr_freq_remove(struct platform_device *pdev)
+#else
 static int set_ddr_freq_remove(struct platform_device *pdev)
+#endif
 {
 	device_remove_file(&pdev->dev, &dev_attr_set_ddr_capped_freq);
 	if (chan)
 		mbox_free_channel(chan);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
 	return 0;
+#endif
 }
 static const struct of_device_id aop_qmp_match_tbl[] = {
 	{.compatible = "qcom,aop-set-ddr-freq"},
