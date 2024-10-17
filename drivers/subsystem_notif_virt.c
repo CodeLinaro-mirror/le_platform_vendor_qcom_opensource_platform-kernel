@@ -19,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
+#include <linux/version.h>
 #include "qcom_common.h"
 
 #define CLIENT_STATE_OFFSET 4
@@ -246,12 +247,18 @@ static int subsys_notif_virt_probe(struct platform_device *pdev)
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,10,0)
+static void subsys_notif_virt_remove(struct platform_device *pdev)
+#else
 static int subsys_notif_virt_remove(struct platform_device *pdev)
+#endif
 {
 	destroy_workqueue(ssr_wq);
 	release_resources();
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,10,0)
 	return 0;
+#endif
 }
 
 static const struct of_device_id match_table[] = {
