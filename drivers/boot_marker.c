@@ -18,9 +18,14 @@
 #include <linux/slab.h>
 #include <linux/suspend.h>
 #include <linux/uaccess.h>
+#include <soc/qcom/qcom_stats.h>
 #include <linux/hashtable.h>
 
-void place_marker(const char *name);
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+#include <linux/bootmarker_kernel.h>
+#endif
+
+int place_marker(const char *name);
 void destroy_marker_kernel(const char *name);
 unsigned long long msm_timer_get_sclk_ticks_kernel(void);
 static inline int boot_marker_enabled(void) { return 1; }
@@ -39,8 +44,20 @@ static inline int boot_marker_enabled(void) { return 1; }
 #define TIMER_KHZ 32768
 #define MSM_ARCH_TIMER_FREQ     19200000
 
+struct boot_stats {
+	uint32_t bootloader_start;
+	uint32_t bootloader_end;
+	uint32_t bootloader_load_boot_start;
+	uint32_t bootloader_load_boot_end;
+	uint32_t bootloader_load_vendor_boot_start;
+	uint32_t bootloader_load_vendor_boot_end;
+	uint32_t bootloader_load_init_boot_start;
+	uint32_t bootloader_load_init_boot_end;
+} __packed;
+
 static void __iomem *mpm_counter_base;
 static uint32_t mpm_counter_freq;
+static struct boot_stats __iomem *boot_stats;
 
 struct boot_marker {
 	char marker_name[MARKER_STRING_WIDTH];
@@ -54,6 +71,55 @@ static struct boot_marker boot_marker_list;
 static struct kobject *bootkpi_obj;
 static int num_markers;
 static DECLARE_HASHTABLE(marker_htable, 5);
+
+static u64 get_time_in_msec(u64 counter)
+{
+	counter *= MSEC_PER_SEC;
+	do_div(counter, MSM_ARCH_TIMER_FREQ);
+	return counter;
+}
+
+static void measure_wake_up_time(void)
+{
+	u64 wake_up_time, deep_sleep_exit_time, current_time;
+	char wakeup_marker[50] = {0,};
+
+	current_time = arch_timer_read_counter();
+	deep_sleep_exit_time = get_aosd_sleep_exit_time();
+
+	if (deep_sleep_exit_time) {
+		wake_up_time = get_time_in_msec(current_time - deep_sleep_exit_time);
+		pr_debug("Current= %llu, wakeup=%llu, kpi=%llu msec\n",
+				current_time, deep_sleep_exit_time,
+				wake_up_time);
+		snprintf(wakeup_marker, sizeof(wakeup_marker),
+				"M - STR Wakeup : %llu ms", wake_up_time);
+		destroy_marker_kernel("M - STR Wakeup");
+		place_marker(wakeup_marker);
+	} else
+		destroy_marker_kernel("M - STR Wakeup");
+}
+
+/**
+ * boot_kpi_pm_notifier() - PM notifier callback function.
+ * @nb:		Pointer to the notifier block.
+ * @event:	Suspend state event from PM module.
+ * @unused:	Null pointer from PM module.
+ *
+ * This function is register as callback function to get notifications
+ * from the PM module on the system suspend state.
+ */
+static int boot_kpi_pm_notifier(struct notifier_block *nb,
+				  unsigned long event, void *unused)
+{
+	if (event == PM_POST_SUSPEND)
+		measure_wake_up_time();
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block boot_kpi_pm_nb = {
+	.notifier_call = boot_kpi_pm_notifier,
+};
 
 unsigned long long msm_timer_get_sclk_ticks_kernel(void)
 {
@@ -198,17 +264,73 @@ static void boot_marker_cleanup(void)
 	spin_unlock(&boot_marker_list.slock);
 }
 
-void place_marker(const char *name)
-{
-	_create_boot_marker((char *)name, msm_timer_get_sclk_ticks_kernel());
-}
-EXPORT_SYMBOL(place_marker);
-
 void destroy_marker_kernel(const char *name)
 {
 	_destroy_boot_marker((char *) name);
 }
 EXPORT_SYMBOL(destroy_marker_kernel);
+
+static void set_bootloader_stats(bool hibernation_restore)
+{
+	unsigned long long ts1, ts2;
+
+	if (IS_ERR_OR_NULL(boot_stats)) {
+		pr_err("boot_marker: imem not initialized!\n");
+		return;
+	}
+
+	_create_boot_marker("M - APPSBL Start - ",
+			readl_relaxed(&boot_stats->bootloader_start));
+	if (hibernation_restore) {
+		_create_boot_marker("D - APPSBL Hibernation Image Load Start -",
+			readl_relaxed(&boot_stats->bootloader_load_boot_start));
+		_create_boot_marker("D - APPSBL Hibernation Image Load End - ",
+			readl_relaxed(&boot_stats->bootloader_load_boot_end));
+		goto end;
+	}
+
+	ts1 = readl_relaxed(&boot_stats->bootloader_load_boot_start);
+	if (ts1) {
+		_create_boot_marker("M - APPSBL Boot Load Start - ", ts1);
+		ts2 = readl_relaxed(&boot_stats->bootloader_load_boot_end);
+		_create_boot_marker("M - APPSBL Boot Load End - ", ts2);
+		_create_boot_marker("D - APPSBL Boot Load Time - ", ts2 - ts1);
+	}
+
+	ts1 = readl_relaxed(&boot_stats->bootloader_load_vendor_boot_start);
+	if (ts1) {
+		_create_boot_marker("M - APPSBL Vendor Boot Load Start - ", ts1);
+		ts2 = readl_relaxed(&boot_stats->bootloader_load_vendor_boot_end);
+		_create_boot_marker("M - APPSBL Vendor Boot Load End - ", ts2);
+		_create_boot_marker("D - APPSBL Vendor Boot Load Time - ", ts2 - ts1);
+	}
+
+	ts1 = readl_relaxed(&boot_stats->bootloader_load_init_boot_start);
+	if (ts1) {
+		_create_boot_marker("M - APPSBL Init Boot Load Start - ", ts1);
+		ts2 = readl_relaxed(&boot_stats->bootloader_load_init_boot_end);
+		_create_boot_marker("M - APPSBL Init Boot Load End - ", ts2);
+		_create_boot_marker("D - APPSBL Init Load Time - ", ts2 - ts1);
+	}
+end:
+	_create_boot_marker("M - APPSBL End - ",
+			readl_relaxed(&boot_stats->bootloader_end));
+}
+
+int place_marker(const char *name)
+{
+
+#if IS_ENABLED(CONFIG_HIBERNATION)
+        if (!strcmp(name, "M - Image Kernel Start")) {
+                boot_marker_cleanup();
+                set_bootloader_stats(true);
+        }
+#endif /* CONFIG_HIBERNATION */
+
+        _create_boot_marker((char *)name, msm_timer_get_sclk_ticks_kernel());
+        return 0;
+}
+EXPORT_SYMBOL(place_marker);
 
 static ssize_t bootkpi_reader(struct file *fp, struct kobject *obj,
 		struct bin_attribute *bin_attr, char *user_buffer, loff_t off,
@@ -350,6 +472,12 @@ static int init_bootkpi(void)
 	INIT_LIST_HEAD(&boot_marker_list.list);
 	spin_lock_init(&boot_marker_list.slock);
 
+
+	ret = register_pm_notifier(&boot_kpi_pm_nb);
+	if (ret)
+		pr_err("boot_marker: power state notif error\n");
+
+
 	return 0;
 }
 
@@ -359,6 +487,29 @@ static void exit_bootkpi(void)
 	sysfs_remove_file(bootkpi_obj, &mpm_timer_attribute.attr);
 	sysfs_remove_bin_file(bootkpi_obj, &kpi_values_attribute);
 	kobject_del(bootkpi_obj);
+}
+
+static int imem_parse_dt(void)
+{
+	struct device_node *np_imem;
+
+	np_imem = of_find_compatible_node(NULL, NULL,
+					"qcom,msm-imem-boot_stats");
+	if (!np_imem) {
+		pr_err("can't find qcom,msm-imem node\n");
+		goto err1;
+	}
+	boot_stats = of_iomap(np_imem, 0);
+	if (!boot_stats) {
+		pr_err("boot_stats: Can't map imem\n");
+		goto err2;
+	}
+
+err2:
+	of_node_put(np_imem);
+	return 0;
+err1:
+	return -ENODEV;
 }
 
 static int mpm_parse_dt(void)
@@ -381,14 +532,11 @@ static int mpm_parse_dt(void)
 			pr_err("mpm_counter: cant map counter base\n");
 			goto err2;
 		}
-	} else {
-		goto err2;
 	}
-
-	return 0;
 
 err2:
 	of_node_put(np_mpm2);
+	return 0;
 err1:
 	return -ENODEV;
 }
@@ -400,6 +548,17 @@ static void print_boot_marker(void)
 	pr_info("KPI: Kernel MPM Clock frequency = %u\n",
 		mpm_counter_freq);
 }
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+	const static struct bootmarker_drv_ops bootmarker_driver_ops = {
+        	 .bootmarker_place_marker =  place_marker,
+	};
+
+	int get_bootmarker_kernel_fun_ops(void)
+	{
+		return provide_bootmarker_kernel_fun_ops(&bootmarker_driver_ops);
+	}
+
+#endif
 
 static int __init boot_marker_init(void)
 {
@@ -408,28 +567,40 @@ static int __init boot_marker_init(void)
 	ret = mpm_parse_dt();
 	if (ret < 0)
 		return -ENODEV;
-
-	print_boot_marker();
-	if (boot_marker_enabled()) {
+	if (ret == 0) {
+		print_boot_marker();
 		ret = init_bootkpi();
 		if (ret) {
 			pr_err("boot_marker: BootKPI init failed\n");
 			return ret;
 		}
+		ret = imem_parse_dt();
+		if (ret == 0) {
+			set_bootloader_stats(false);
+		}
 	} else {
+		iounmap(boot_stats);
 		iounmap(mpm_counter_base);
 	}
 
+
+#if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
+
+	/*If the api fails to get the func ops, print the error and continue
+	 * Do not treat it as fatal*/
+	ret = get_bootmarker_kernel_fun_ops();
+	if (ret)
+		pr_err("failed to provide bootmarker ops %d", ret);
+#endif
 	return 0;
 }
 module_init(boot_marker_init);
 
 static void __exit boot_marker_exit(void)
 {
-	if (boot_marker_enabled()) {
-		exit_bootkpi();
-		iounmap(mpm_counter_base);
-	}
+	exit_bootkpi();
+	iounmap(boot_stats);
+	iounmap(mpm_counter_base);
 }
 module_exit(boot_marker_exit)
 

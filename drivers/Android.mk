@@ -10,6 +10,7 @@ CPUFREQ_VM_SELECT := CONFIG_CPUFREQ_VM=m
 MSM_S2R_WAKEUP_MARKER := CONFIG_MSM_S2R_WAKEUP_MARKER=m
 MSM_BOOT_MARKER := CONFIG_MSM_BOOT_MARKER=m
 QCOM_SUBSYS_STATUS := CONFIG_QCOM_SUBSYS_STATUS=m
+QCOM_MEM_ONLINE := CONFIG_QCOM_MEM_ONLINE=m
 
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
@@ -213,6 +214,22 @@ LOCAL_MODULE_DEBUG_ENABLE := true
 LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+ifeq ($(TARGET_BOARD_AUTO),true)
+###########################################################
+KBUILD_OPTIONS += MODNAME=mem-online
+KBUILD_OPTIONS += $(QCOM_MEM_ONLINE)
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := mem-online.ko
+LOCAL_MODULE_KBUILD_NAME  := mem-online.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+endif
 
 endif
 

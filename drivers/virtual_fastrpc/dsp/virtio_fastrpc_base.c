@@ -106,6 +106,9 @@ static ssize_t vfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 				"\n%s %d %s %d\n", "tgid_frpc =", fl->tgid_frpc,
 				"sessionid =", fl->sessionid);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d\n", "file_close =", fl->file_close);
+
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
 			" LIST OF BUFS ", title);
 		spin_lock(&fl->hlock);
