@@ -12,6 +12,7 @@
 #include <linux/sys_soc.h>
 #include <linux/types.h>
 #include <linux/of.h>
+#include <linux/version.h>
 
 /*
  * SoC version type with major number in the upper 16 bits and minor
@@ -54,12 +55,19 @@ static int qcom_dt_socinfo_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(soc_dev);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,10,0)
+static void qcom_dt_socinfo_remove(struct platform_device *pdev)
+#else
 static int qcom_dt_socinfo_remove(struct platform_device *pdev)
+#endif
 {
 	soc_device_unregister(soc_dev);
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,10,0)
 	return 0;
+#endif
 }
+
+
 
 static struct platform_driver qcom_dt_socinfo_driver = {
 	.probe = qcom_dt_socinfo_probe,

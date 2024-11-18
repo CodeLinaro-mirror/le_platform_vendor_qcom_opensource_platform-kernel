@@ -12,12 +12,15 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATF
     PRODUCT_PACKAGES += dump_boot_log.ko
     PRODUCT_PACKAGES += s2r_wakeup_marker.ko
     PRODUCT_PACKAGES += subsystem_status.ko
+    PRODUCT_PACKAGES += mem-online.ko
 else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
 ifneq ($(TARGET_USES_GY), true)
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
     PRODUCT_PACKAGES += vm-cpufreq.ko
+else
+    PRODUCT_PACKAGES += virtio_ssr.ko
 endif
 ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
     PRODUCT_PACKAGES += vfastrpc.ko

@@ -187,6 +187,8 @@ static ssize_t hfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 				"\n%s %d %s %d %s 0x%lx\n", "tgid_frpc =",
 				fl->tgid_frpc, "sessionid =", fl->sessionid,
 				"upid =", vfl->upid);
+		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
+				"\n%s %d\n", "file_close =", fl->file_close);
 
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
 			"\n========%s %s %s========\n", title,
@@ -955,7 +957,10 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 				&config.domain_num);
 		dev_info(&vdev->dev, "get domain_num %d from config space\n",
 				config.domain_num);
-		me->num_channels = config.domain_num;
+		if (config.domain_num < NUM_CHANNELS)
+			me->num_channels = config.domain_num;
+		else
+			me->num_channels = NUM_CHANNELS;
 	} else {
 		dev_dbg(&vdev->dev, "set domain_num to default value\n");
 		me->num_channels = NUM_CHANNELS;

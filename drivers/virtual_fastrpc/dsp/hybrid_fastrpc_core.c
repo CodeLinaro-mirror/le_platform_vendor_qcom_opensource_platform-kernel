@@ -480,7 +480,14 @@ static int hfastrpc_init_process(struct vfastrpc_file *vfl,
 	int domain = vfl->domain;
 	struct hlist_node *n = NULL;
 	unsigned long irq_flags = 0;
-	struct vfastrpc_channel_ctx *chan = &vfl->apps->channel[domain];
+	struct vfastrpc_channel_ctx *chan = NULL;
+
+	if (domain < 0 || domain >= vfl->apps->num_channels) {
+		err = -ECHRNG;
+		goto bail;
+	}
+
+	chan = &vfl->apps->channel[domain];
 
 	if (chan->unsigned_support && fl->dev_minor == MINOR_NUM_DEV) {
 		/*
@@ -1211,7 +1218,7 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 	}
 
 	if (invokefd->fds) {
-		K_COPY_FROM_USER(err, kernel, ctx->fds, invokefd->fds,
+		K_COPY_FROM_USER(err, kernel_msg, ctx->fds, invokefd->fds,
 						bufs * sizeof(*ctx->fds));
 		if (err) {
 			ADSPRPC_ERR(
@@ -1224,7 +1231,7 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 		ctx->fds = NULL;
 	}
 	if (invokefd->attrs) {
-		K_COPY_FROM_USER(err, kernel, ctx->attrs, invokefd->attrs,
+		K_COPY_FROM_USER(err, kernel_msg, ctx->attrs, invokefd->attrs,
 						bufs * sizeof(*ctx->attrs));
 		if (err) {
 			ADSPRPC_ERR(
@@ -1266,7 +1273,7 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t kernel,
 		ctx->perf->tid = fl->tgid;
 	}
 	if (invokefd->job) {
-		K_COPY_FROM_USER(err, kernel, &ctx->asyncjob, invokefd->job,
+		K_COPY_FROM_USER(err, kernel_msg, &ctx->asyncjob, invokefd->job,
 						sizeof(ctx->asyncjob));
 		if (err)
 			goto bail;
@@ -1543,12 +1550,12 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	fl->file_close = FASTRPC_PROCESS_EXIT_START;
 	spin_unlock(&fl->hlock);
 
-	debugfs_remove(fl->debugfs_file);
-	kfree(fl->debug_buf);
-
 	/* This cmd is only required when PD is opened on DSP */
 	if (fl->dsp_proc_init == 1)
 		virt_fastrpc_close(vfl);
+
+	debugfs_remove(fl->debugfs_file);
+	kfree(fl->debug_buf);
 
 	/* Dummy wake up to exit Async worker thread */
 	spin_lock_irqsave(&fl->aqlock, flags);

@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
+#include <linux/version.h>
 
 struct wall_charger_type {
 	struct power_supply_desc wall_desc;
@@ -68,12 +69,18 @@ static int wallpower_probe(struct platform_device *pdev)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,10,0)
+static void wallpower_remove(struct platform_device *pdev)
+#else
 static int wallpower_remove(struct platform_device *pdev)
+#endif
 {
 	struct wall_charger_type *wall_type = platform_get_drvdata(pdev);
 
 	power_supply_unregister(wall_type->wall_psy);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,10,0)
 	return 0;
+#endif
 }
 
 static struct platform_device wallpower_devices = {

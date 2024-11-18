@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/notifier.h>
 #include <linux/silent_mode.h>
+#include <linux/version.h>
 
 
 /**
@@ -235,10 +236,17 @@ static const struct dev_pm_ops silent_mode_pm_ops = {
 };
 #endif
 
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,10,0)
+static void silent_mode_remove(struct platform_device *pdev)
+#else
 static int silent_mode_remove(struct platform_device *pdev)
+#endif
 {
 	dev_dbg(&pdev->dev, "silent_mode: Entered %s\n", __func__);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,10,0)
 	return 0;
+#endif
 }
 
 static const struct of_device_id silent_mode_match_table[] = {

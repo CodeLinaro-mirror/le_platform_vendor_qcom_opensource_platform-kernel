@@ -6,25 +6,11 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
-#include <linux/syscore_ops.h>
 #include <linux/suspend.h>
 #include <soc/qcom/qcom_stats.h>
 
-static int subsys_syscore_suspend(void)
-{
-	bool subsys_sleep_status = has_subsystem_slept();
-
-	pr_info("%s: All subsystems slept: %d\n", __func__, subsys_sleep_status);
-	return !subsys_sleep_status;
-}
-
-struct syscore_ops subsys_sleep_syscore_ops = {
-	.suspend         = subsys_syscore_suspend,
-};
-
 static int qcom_subsys_status_probe(struct platform_device *pdev)
 {
-	register_syscore_ops(&subsys_sleep_syscore_ops);
 	subsystem_sleep_debug_enable(true);
 
 	return 0;
@@ -32,7 +18,7 @@ static int qcom_subsys_status_probe(struct platform_device *pdev)
 
 static int qcom_subsys_suspend_noirq(struct device *dev)
 {
-	bool subsys_sleep_status = has_subsystem_slept();
+	bool subsys_sleep_status = current_subsystem_sleep();
 
 	pr_info("%s: All subsystems slept: %d\n", __func__, subsys_sleep_status);
 	return !subsys_sleep_status;
