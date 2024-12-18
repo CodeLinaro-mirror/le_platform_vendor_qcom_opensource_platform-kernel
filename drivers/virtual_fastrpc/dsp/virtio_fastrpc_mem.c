@@ -295,6 +295,7 @@ int vfastrpc_mmap_remove_fd(struct vfastrpc_file *vfl, int fd, u32 *entries)
 						__func__, match->refs, match->ctx_refs);
 				err = -ETOOMANYREFS;
 			}
+			map->attr = map->attr & (~FASTRPC_ATTR_KEEP_MAP);
 			vfastrpc_mmap_free(vfl, match, 0);
 		}
 	}
@@ -815,6 +816,7 @@ int hfastrpc_mmap_remove_fd(struct vfastrpc_file *vfl, int fd)
 						__func__, match->refs, match->ctx_refs);
 				err = -ETOOMANYREFS;
 			}
+			map->attr = map->attr & (~FASTRPC_ATTR_KEEP_MAP);
 			hfastrpc_mmap_free(vfl, match, 0);
 		}
 	}
