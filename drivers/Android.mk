@@ -73,7 +73,7 @@ LOCAL_MODULE_DEBUG_ENABLE := true
 LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 
 ifneq ($(TARGET_BOARD_AUTO),true)
-LOCAL_REQUIRED_MODULES    +=boot_marker_select-module-symvers
+LOCAL_REQUIRED_MODULES    += boot_marker_select-module-symvers
 LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,boot_marker_select-module-symvers)/Module.symvers
 endif
 
@@ -313,6 +313,17 @@ endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 endif
+
+###########################################################
+include $(CLEAR_VARS)
+# For incremental compilation
+LOCAL_SRC_FILES           := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := platform_kernel_select-module-symvers
+LOCAL_MODULE_STEM         := Module.symvers
+LOCAL_MODULE_KBUILD_NAME  := Module.symvers
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
 ###########################################################
 endif # DLKM check
