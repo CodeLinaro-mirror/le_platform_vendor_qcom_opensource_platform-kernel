@@ -480,7 +480,14 @@ static int hfastrpc_init_process(struct vfastrpc_file *vfl,
 	int domain = vfl->domain;
 	struct hlist_node *n = NULL;
 	unsigned long irq_flags = 0;
-	struct vfastrpc_channel_ctx *chan = &vfl->apps->channel[domain];
+	struct vfastrpc_channel_ctx *chan = NULL;
+
+	if (domain < 0 || domain >= vfl->apps->num_channels) {
+		err = -ECHRNG;
+		goto bail;
+	}
+
+	chan = &vfl->apps->channel[domain];
 
 	if (chan->unsigned_support && fl->dev_minor == MINOR_NUM_DEV) {
 		/*

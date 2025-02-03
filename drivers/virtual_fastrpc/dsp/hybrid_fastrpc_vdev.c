@@ -955,7 +955,10 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 				&config.domain_num);
 		dev_info(&vdev->dev, "get domain_num %d from config space\n",
 				config.domain_num);
-		me->num_channels = config.domain_num;
+		if (config.domain_num < NUM_CHANNELS)
+			me->num_channels = config.domain_num;
+		else
+			me->num_channels = NUM_CHANNELS;
 	} else {
 		dev_dbg(&vdev->dev, "set domain_num to default value\n");
 		me->num_channels = NUM_CHANNELS;
