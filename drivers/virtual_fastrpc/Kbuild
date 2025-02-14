@@ -8,6 +8,7 @@ hfastrpc-objs := dsp/hybrid_fastrpc_vdev.o \
 		 dsp/fastrpc_core.o \
 		 dsp/fastrpc_ioctl.o \
 		 dsp/fastrpc_mem.o \
-		 dsp/fastrpc_vq.o
+		 dsp/fastrpc_vq.o \
+		 dsp/fastrpc_sysfs.o
 
 obj-$(CONFIG_HYBRID_FASTRPC) += hfastrpc.o

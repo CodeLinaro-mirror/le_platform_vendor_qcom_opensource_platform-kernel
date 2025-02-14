@@ -8,7 +8,7 @@
 
 #include "fastrpc_common.h"
 int fastrpc_device_register(struct device *dev, struct fastrpc_channel_ctx *cctx,
-		bool is_secured, const char *domain);
+		bool is_secured, bool legacy, const char *domain);
 void fastrpc_channel_ctx_get(struct fastrpc_channel_ctx *cctx);
 void fastrpc_channel_ctx_put(struct fastrpc_channel_ctx *cctx);
 void fastrpc_channel_update_invoke_cnt(

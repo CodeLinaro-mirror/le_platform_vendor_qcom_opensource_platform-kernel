@@ -270,6 +270,19 @@ struct virt_open_msg {
 static int fastrpc_mem_map_to_dsp(struct fastrpc_user *fl, int fd, int offset,
 					u32 flags, u32 va, u64 da,
 					size_t size, uintptr_t *raddr);
+/*
+ * Checks if a given logical domain id is valid.
+ *
+ * @param domain_id Logical domain ID to check.
+ *
+ * @return true if the domain ID is valid, false otherwise.
+ */
+static bool fastrpc_is_valid_logical_domain_id(u32 domain_id)
+{
+	struct fastrpc_domain *domain = fastrpc_lookup_domain_in_table(domain_id,
+		false);
+	return domain ? true : false;
+}
 
 static inline int64_t getnstimediff(struct timespec64 *start)
 {
@@ -714,14 +727,11 @@ int fastrpc_get_dsp_info(struct fastrpc_user *fl, char __user *argp)
 		return  -EFAULT;
 
 	cap.capability = 0;
-	if (cap.domain >= FASTRPC_DEV_MAX) {
-		RPC_ERR("invalid domain id:%d\n", cap.domain);
-		return -ECHRNG;
-	}
 
-	/* fastrpc capablities does not support modem domain */
-	if (cap.domain == MDSP_DOMAIN_ID) {
-		RPC_ERR("modem not supported capablity\n");
+	/* Validate that domain passed is either a logical or legacy domain id */
+	if (!IS_LEGACY_DOMAIN_ID(cap.domain) &&
+		!fastrpc_is_valid_logical_domain_id(cap.domain)) {
+		RPC_ERR("invalid domain id:%d\n", cap.domain);
 		return -ECHRNG;
 	}
 
@@ -996,7 +1006,7 @@ static int fastrpc_create_session_debugfs(struct fastrpc_user *fl)
                 if (!(fl->debugfs_file_create)) {
                         size = strlen(cur_comm) + strlen("_")
                                 + COUNT_OF(current->pid) + strlen("_")
-                                + COUNT_OF(FASTRPC_DEV_MAX)
+                                + COUNT_OF(domain_id)
                                 + 1;
 
                         fl->debugfs_buf = kzalloc(size, GFP_KERNEL);
@@ -1051,7 +1061,7 @@ int fastrpc_init_create_process(struct fastrpc_user *fl, char __user *argp)
 	if (err)
 		return err;
 
-	if (fl->cctx->domain_id == CDSP_DOMAIN_ID)
+	if (fl->cctx->domain->type == FASTRPC_NSP)
 		fastrpc_create_persistent_headers(fl);
 #ifdef CONFIG_DEBUG_FS
 	fastrpc_create_session_debugfs(fl);
@@ -1764,7 +1774,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl, u32 kernel,
 wait:
 	if (fl->poll_mode &&
 		handle > FASTRPC_MAX_STATIC_HANDLE &&
-		fl->cctx->domain_id == CDSP_DOMAIN_ID &&
+		fl->cctx->domain->type == FASTRPC_NSP &&
 		fl->pd_type == DYNAMIC_PD)
 		ctx->rsp_flags = POLL_MODE;
 
@@ -2128,13 +2138,26 @@ read_notif_status:
 }
 
 static int fastrpc_get_notif_response(struct fastrpc_internal_notif_rsp *notif,
-					void *param, struct fastrpc_user *fl)
+					void *param, struct fastrpc_user *fl, bool legacy_domains)
 {
 	int err = 0;
+	struct fastrpc_domain *domain = NULL;
 
 	err = fastrpc_wait_on_notif_queue(notif, fl);
 	if (err)
 		return err;
+
+	/*
+	 * If user is using legacy domain ids, send the legacy id back to
+	 * client in process status notification.
+	 */
+	if (legacy_domains) {
+		if (is_device_discovery_supported()) {
+			domain = fastrpc_lookup_domain_in_table(notif->domain, false);
+			if (domain->legacy)
+				notif->domain = domain->legacy_id;
+		}
+	}
 
 	if (copy_to_user((void __user *)param, notif,
 			sizeof(struct fastrpc_internal_notif_rsp)))
@@ -2186,6 +2209,7 @@ int fastrpc_multimode_invoke(struct fastrpc_user *fl, char __user *argp)
 	u32 multisession;
 	u64 *perf_kernel;
 	int err = 0;
+	bool legacy_domains = true;
 
 	if (copy_from_user(&invoke, argp, sizeof(invoke)))
 		return -EFAULT;
@@ -2225,8 +2249,10 @@ int fastrpc_multimode_invoke(struct fastrpc_user *fl, char __user *argp)
 		kfree(fsig);
 		break;
 	case FASTRPC_INVOKE_NOTIF:
+		if (invoke.dynamic_domains)
+			legacy_domains = false;
 		err = fastrpc_get_notif_response(&notif,
-				(void *)invoke.invparam, fl);
+				(void *)invoke.invparam, fl, legacy_domains);
 		break;
 	case FASTRPC_INVOKE_MULTISESSION:
 		if (copy_from_user(&multisession,
@@ -2844,7 +2870,7 @@ static const struct file_operations fastrpc_fops = {
 };
 
 int fastrpc_device_register(struct device *dev, struct fastrpc_channel_ctx *cctx,
-				bool is_secured, const char *domain)
+				bool is_secured, bool legacy, const char *domain)
 {
 	struct fastrpc_device_node *fdev;
 	int err;
@@ -2858,17 +2884,34 @@ int fastrpc_device_register(struct device *dev, struct fastrpc_channel_ctx *cctx
 	cctx->dev = dev;
 	fdev->miscdev.minor = MISC_DYNAMIC_MINOR;
 	fdev->miscdev.fops = &fastrpc_fops;
-	fdev->miscdev.name = devm_kasprintf(dev, GFP_KERNEL, "fastrpc-%s%s",
-					domain, is_secured ? "-secure" : "");
+	if (legacy)
+		fdev->miscdev.name = devm_kasprintf(dev, GFP_KERNEL, "fastrpc-%s%s",
+							domain, is_secured ? "-secure" : "");
+	else
+		fdev->miscdev.name = devm_kasprintf(dev, GFP_KERNEL, "fastrpc-%s",
+							domain);
 	if (!fdev->miscdev.name)
 		return -ENOMEM;
 
 	err = misc_register(&fdev->miscdev);
 	if (!err) {
-		if (is_secured)
-			cctx->secure_fdevice = fdev;
-		else
+		/*
+		 * Device nodes are created based on following criteria:
+		 *   - For all channels, create a single device node with the
+		 *     new domain name
+		 *   - For channels that are marked as the legacy dsp of that type,
+		 *      (for backward compatibility), also create the secure (and
+		 *      non-secure, if applicable) device nodes using the legacy name
+		 *      of the channel (eg: using CDSP name for the first NSP)
+		 */
+		if (legacy) {
+			if (is_secured)
+					cctx->legacy_secure_fdevice = fdev;
+			else
+					cctx->legacy_fdevice = fdev;
+		} else {
 			cctx->fdevice = fdev;
+		}
 	}
 
 	return err;

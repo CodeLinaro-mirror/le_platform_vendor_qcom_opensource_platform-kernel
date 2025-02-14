@@ -13,6 +13,7 @@
 #include <linux/virtio_config.h>
 #include <linux/uaccess.h>
 #include <linux/of.h>
+#include <linux/rpmsg.h>
 #include "fastrpc_common.h"
 
 /* Virtio ID of FASTRPC : 0xC005 */
@@ -34,6 +35,8 @@
 #define VIRTIO_FASTRPC_F_MEM_MAP			8
 /* indicates fastrpc_mmap/fastrpc_munmap is supported */
 #define VIRTIO_FASTRPC_F_HYBRID				9
+
+#define VIRTIO_FASTRPC_F_DEVICE_DISCOVERY 11
 
 #define MAX_FASTRPC_BUF_SIZE		(1024*1024*4)
 #define DEF_FASTRPC_BUF_SIZE		(128*1024)
@@ -90,20 +93,33 @@ struct hfastrpc_config {
 	u32 version;
 	u32 domain_num;
 	u32 max_buf_size;
+	u32 domain_info_offset;
 } __packed;
+
+struct fastrpc_domain_config {
+	u32 domain_type;
+	u32 instance_id;
+	u32 logical_id;
+	u32 reserved;
+};
 
 static struct fastrpc_common g_frpc;
 
-void fastrpc_update_gctx(struct fastrpc_channel_ctx *cctx, int flag)
-{
-	struct fastrpc_channel_ctx **ctx = &g_frpc.gctx[cctx->domain_id];
+static struct fastrpc_domain_config * g_domain_info = NULL;
 
+static bool g_is_device_discovery_supported = false;
+
+bool is_device_discovery_supported(void)
+{
+	return g_is_device_discovery_supported;
+}
+
+void fastrpc_update_gdriver(struct fastrpc_channel_ctx *cctx, int flag)
+{
 	if (flag == 1) {
-		*ctx = cctx;
 		cctx->gdriver = &g_frpc;
 		cctx->dev = cctx->gdriver->dev;
 	} else {
-		*ctx = NULL;
 		cctx->gdriver = NULL;
 	}
 }
@@ -183,6 +199,273 @@ static void fastrpc_vq_callback(struct virtqueue *rvq)
 		spin_unlock_irqrestore(&gdriver->rvq.vq_lock, flags);
 	}
 }
+/*
+ * Add entry for domain in hash-table or update status of existing entry.
+ *
+ * @param domain  Pointer to the fastrpc domain structure to be added.
+ * @param type    Type of the domain.
+ * @param label   Label of the domain.
+ * @param instance_id  Instance ID of the domain.
+ *
+ * @return 0 on success, negative error code on failure.
+ */
+static int fastrpc_add_domain_to_table(struct fastrpc_domain **domain,
+				u32 type, const char* label, u32 instance_id)
+{
+	struct fastrpc_domain *entry = NULL;
+	struct mutex *hmut = &g_frpc.hmut;
+	u32 phy_id = 0;
+	u32 logical_id = 0;
+	int i, err = 0;
+
+	phy_id = GENERATE_DSP_PHYSICAL_ID(type, instance_id);
+
+	for (i = 0; i < g_frpc.num_channels; i++) {
+		if ((type == g_domain_info[i].domain_type) &&
+			(instance_id == g_domain_info[i].instance_id)) {
+			logical_id = g_domain_info[i].logical_id;
+		}
+	}
+
+	if (!logical_id) {
+		err = -ENODEV;
+		RPC_ERR("Error %d: (phy id %u) not provided by PVM",
+			err, phy_id);
+		return err;
+	}
+
+	/* Validate if there is an exisitng entry for phy_id */
+	entry = fastrpc_lookup_domain_in_table(phy_id, true);
+	if (!entry) {
+		/*
+		 * If the domain is not found in the table, create a new
+		 * entry and populate all the attributes
+		 * phy_id, instance_id, type, logical_id, name
+		 */
+		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+		if (!entry)
+			return -ENOMEM;
+		entry->phy_id = phy_id;
+		entry->instance_id = instance_id;
+		entry->type = type;
+
+		/* Channel name will be generated as <dsp-type-name><physical-id> */
+		err = snprintf(entry->name, sizeof(entry->name), "%s%d", label, phy_id);
+		if (err < 0 || err >= sizeof(entry->name)) {
+			err = -EFAULT;
+			RPC_ERR("Error %d: failed to generate name for label %s phy_id %u",
+				err, label, phy_id);
+			return err;
+		}
+
+		mutex_lock(hmut);
+		hash_add(g_frpc.fastrpc_domains_table, &entry->node, phy_id);
+
+		if (instance_id == 0 || (type == FASTRPC_NSP && instance_id == 1))  {
+			/*
+			 * For LPASS, SDSP types only the dsp with instance_id 0 is
+			 *                 assigned as legacy adsp, slpi domains
+			 * For NSP types, DSP with instance id '0' and '1' are marked as legacy
+			 *                to handle legacy cdsp and cdsp1 domains
+			*/
+			entry->legacy = true;
+		}
+
+		entry->id = logical_id;
+
+		mutex_unlock(hmut);
+	} else {
+		if (entry->status != DSP_STATUS_DOWN) {
+			/*
+			* If entry for channel is already present in hash-table, it means
+			* the channel has gone through ssr. In that case, its status has to be
+			* DOWN. If not, system is in bad-state.
+			*/
+			err = EINVAL;
+			RPC_ERR("Error %d: %s (phy id %u) already in table with bad status %d",
+					err, entry->name, entry->phy_id, entry->status);
+			return err;
+		}
+	}
+	*domain = entry;
+	return 0;
+}
+
+/*
+ * fastrpc_lookup_domain_in_table() -
+ * Looks up a domain in the in the fastrpc domains hash-table using either
+ * physical id or logical domain id based on the flag.
+ *
+ * @param key          : physical id / logical domain id to lookup in table
+ * @param use_phy_id   : Flag to indicate whether to lookup using phy id
+ *                       or logical id.
+ *
+ * @return Pointer to the matching domain structure, or NULL if not found.
+ */
+struct fastrpc_domain *fastrpc_lookup_domain_in_table(
+	u32 key, bool use_phy_id)
+{
+	struct fastrpc_domain *domain = NULL, *match = NULL;
+	struct mutex *hmut = &g_frpc.hmut;
+	int i = 0;
+
+	mutex_lock(hmut);
+	hash_for_each(g_frpc.fastrpc_domains_table, i, domain, node) {
+		/*
+		 * Based on flag, lookup domain based on 32-bit physical id,
+		 * logical id
+		 */
+		if (use_phy_id) {
+			if (domain->phy_id == key) {
+				match = domain;
+				break;
+			}
+		} else {
+			if (domain->id == key) {
+				match = domain;
+				break;
+			}
+		}
+	}
+	mutex_unlock(hmut);
+	return match;
+}
+
+/*
+ * Deletes all entries from the fastrpc domains hash-table.
+ */
+static void fastrpc_delete_domains_table(void)
+{
+	struct fastrpc_domain *domain = NULL;
+	struct mutex *hmut = &g_frpc.hmut;
+	int i = 0;
+
+	mutex_lock(hmut);
+	hash_for_each(g_frpc.fastrpc_domains_table, i, domain, node) {
+		hash_del(&domain->node);
+		kfree(domain);
+	}
+	mutex_unlock(hmut);
+}
+
+
+/*
+ * Convert legacy ID to logical domain ID
+ *
+ * This function takes a legacy ID as input and returns the corresponding
+ * logical ID.
+ *
+ * @param id: Legacy ID to convert
+ * @param logical_id :   Pointer to logical id
+ *
+ * @return 0 on success
+ *         EINAL if logical id is not found.
+ */
+int fastrpc_convert_legacy_id_to_logical_id(u32 legacy_id,
+					u32 *logical_id)
+{
+	struct fastrpc_domain *domain = NULL;
+	struct mutex *hmut = &g_frpc.hmut;
+	int i = 0, err = -EINVAL;
+
+	mutex_lock(hmut);
+	hash_for_each(g_frpc.fastrpc_domains_table, i, domain, node) {
+		if (domain->legacy_id == legacy_id) {
+			*logical_id = domain->id;
+			err = 0;
+			break;
+		}
+	}
+	mutex_unlock(hmut);
+	return err;
+}
+
+/*
+ * Populate fastrpc_domain from device tree node.
+ *
+ * @param rdev   Device structure to extract info from.
+ * @param domain Pointer to fastrpc_domain pointer to be populated.
+ *
+ * @return 0 on success, negative error code on failure.
+ */
+int fastrpc_populate_domain_from_dt(struct device *rdev,
+				struct fastrpc_domain **domain)
+{
+	const char *label = NULL;
+	u32 type = 0, instance_id = U32_MAX;
+	int err = 0;
+	bool valid_label = false;
+	struct device_node *fnode = NULL;
+
+	fnode = of_get_child_by_name(rdev->parent->of_node, "qcom,fastrpc");
+	if (!fnode) {
+		pr_err("Child node not found\n");
+		return -ENODEV;
+	}
+
+	/* Retrieve the label of DSP from DT */
+	err = of_property_read_string(fnode, "label", &label);
+	if (err < 0) {
+		dev_err(rdev, "Error %d: %s: FastRPC DSP label not specified in DT\n",
+			err, __func__);
+		return err;
+	}
+	/* Validate the label retrieved from DT */
+	for (int i = 1; i < FASTRPC_MAX_DSP_TYPE; i++) {
+		if (strcmp(label, fastrpc_dsp_type_labels[i]) == 0) {
+			valid_label = true;
+			break;
+		}
+	}
+
+	/*
+	 * Fail the device probe if it has invalid label. This driver assumes that
+	 * the DTSI file is always updated to contain the new DT properties.
+	 */
+	if (!valid_label) {
+		err = -EINVAL;
+		dev_err(rdev, "Error %d: %s: DSP label %s specified in DT is invalid\n",
+				err, __func__, label);
+		return err;
+	}
+
+	/*
+	 * Retrieve and validate the type of DSP from DT
+	 *
+	 * Fail the call if either dsp-type is not present in DT,
+	 * or invalid DSP type is specified in DT
+	 */
+	err = of_property_read_u32(fnode, "dsp-type", &type);
+	if (err < 0) {
+		dev_err(rdev, "Error %d: %s: dsp-type not specified for %s",
+				err, __func__, label);
+		return -EINVAL;
+	} else if (type >= FASTRPC_MAX_DSP_TYPE || type == 0) {
+		err = -EINVAL;
+		dev_err(rdev, "Error %d: %s: DSP type %u specified in DT is invalid\n",
+				err, __func__, type);
+		return err;
+	}
+
+
+	/* Retrieve the instance id of the DSP, fail the call if not specified */
+	err = of_property_read_u32(fnode, "instance-id", &instance_id);
+	if (err < 0) {
+		dev_info(rdev, "Error %d: %s: instance-id not specified for %s\n",
+				err, __func__, label);
+		return -EINVAL;
+	}
+
+	/* Add the info to the domain table */
+	err = fastrpc_add_domain_to_table(domain, type, label, instance_id);
+	if (err < 0) {
+		dev_err(rdev, "Error %d: %s: failed to add domain %s to table (type %u, instance id %u)",
+				err, __func__, label, type, instance_id);
+		return err;
+	}
+	return err;
+}
+
 
 static void virt_init_vq(struct virt_fastrpc_vq *fastrpc_vq,
 				struct virtqueue *vq)
@@ -328,6 +611,29 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 			gdriver->num_channels = config.domain_num;
 		else
 			gdriver->num_channels = FASTRPC_DEV_MAX;
+
+		if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_DEVICE_DISCOVERY)) {
+			RPC_INFO("Device discovery is supported\n");
+			virtio_cread(vdev, struct hfastrpc_config, domain_info_offset,
+					&config.domain_info_offset);
+
+			g_domain_info = kzalloc(sizeof(struct fastrpc_domain_config) *
+									gdriver->num_channels, GFP_KERNEL);
+
+			if (!g_domain_info)
+				return -ENOMEM;
+
+			virtio_cread_bytes(vdev, config.domain_info_offset, &g_domain_info[0],
+							   sizeof(struct fastrpc_domain_config) * gdriver->num_channels);
+			g_is_device_discovery_supported = true;
+
+			mutex_init(&g_frpc.hmut);
+			hash_init(g_frpc.fastrpc_domains_table);
+			fastrpc_sysfs_register_kset();
+		} else {
+			RPC_INFO("Device discovery is not supported\n");
+			g_is_device_discovery_supported = false;
+		}
 	} else {
 		RPC_INFO("set domain_num to default value %d\n", FASTRPC_DEV_MAX);
 		gdriver->num_channels = FASTRPC_DEV_MAX;
@@ -388,6 +694,14 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 #ifdef CONFIG_DEBUG_FS
 	debugfs_remove_recursive(gdriver->debugfs_root);
 #endif
+
+	if (g_is_device_discovery_supported == true) {
+		fastrpc_sysfs_deregister_kset();
+		fastrpc_delete_domains_table();
+		mutex_destroy(&g_frpc.hmut);
+		kfree(g_domain_info);
+	}
+
 	fastrpc_transport_deinit();
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
@@ -411,6 +725,7 @@ static unsigned int features[] = {
 	VIRTIO_FASTRPC_F_DOMAIN_NUM,
 	VIRTIO_FASTRPC_F_VQUEUE_SETTING,
 	VIRTIO_FASTRPC_F_HYBRID,
+	VIRTIO_FASTRPC_F_DEVICE_DISCOVERY,
 };
 
 static struct virtio_driver hybrid_fastrpc_driver = {
