@@ -76,11 +76,17 @@ static int vm_cpufreq_init(struct cpufreq_policy *policy)
 
 	return 0;
 }
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+static void vm_cpufreq_exit(struct cpufreq_policy *policy)
+{
+	return;
+}
+#else
 static int vm_cpufreq_exit(struct cpufreq_policy *policy)
 {
 	return 0;
 }
+#endif
 
 static struct cpufreq_driver vm_cpufreq_driver = {
 	.verify = cpufreq_generic_frequency_table_verify,

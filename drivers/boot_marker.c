@@ -18,8 +18,8 @@
 #include <linux/slab.h>
 #include <linux/suspend.h>
 #include <linux/uaccess.h>
-#include <soc/qcom/qcom_stats.h>
-#include <soc/qcom/boot_marker.h>
+#include "boot_marker.h"
+#include "qcom_stats.h"
 #include <linux/hashtable.h>
 
 #if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
@@ -337,7 +337,7 @@ static ssize_t bootkpi_reader(struct file *fp, struct kobject *obj,
 		size_t count)
 {
 	struct boot_marker *marker;
-	unsigned long ts_whole_num, ts_precision;
+	unsigned long long ts_whole_num, ts_precision;
 	static char *kpi_buf;
 	static int temp;
 	int ret = 0;

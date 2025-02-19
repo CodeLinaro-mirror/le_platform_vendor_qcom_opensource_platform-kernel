@@ -13,6 +13,7 @@
 #include <linux/virtio_config.h>
 #include <linux/uaccess.h>
 #include <linux/of.h>
+#include <linux/version.h>
 #include "virtio_fastrpc_core.h"
 #include "virtio_fastrpc_mem.h"
 #include "virtio_fastrpc_queue.h"
@@ -328,11 +329,20 @@ static void vfastrpc_unused_tx_bufs_list_free(struct vfastrpc_apps *me)
 static int init_vqs(struct vfastrpc_apps *me)
 {
 	struct virtqueue *vqs[2];
+	int err, i;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
 	static const char * const names[] = { "output", "input" };
 	vq_callback_t *cbs[] = { NULL, recv_done };
-	int err, i;
 
 	err = virtio_find_vqs(me->vdev, 2, vqs, cbs, names, NULL);
+#else
+	struct virtqueue_info vqs_info[] = {
+		{ "output", NULL },
+		{ "input", recv_done },
+	};
+
+	err = virtio_find_vqs(me->vdev, 2, vqs, vqs_info, NULL);
+#endif
 	if (err)
 		return err;
 
@@ -552,8 +562,11 @@ static int virt_fastrpc_probe(struct virtio_device *vdev)
 	err = cdev_add(&me->cdev, MKDEV(MAJOR(me->dev_no), 0), NUM_DEVICES);
 	if (err)
 		goto cdev_init_bail;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	me->class = class_create("fastrpc");
+#else
 	me->class = class_create(THIS_MODULE, "fastrpc");
+#endif
 	if (IS_ERR(me->class))
 		goto class_create_bail;
 

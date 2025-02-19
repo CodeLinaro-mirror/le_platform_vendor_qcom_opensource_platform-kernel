@@ -70,7 +70,6 @@ static void subsystem_notif_wq_func(struct work_struct *work)
 
 	state = readl_relaxed(base_reg + subsystem->offset);
 	subsystem_handle = qcom_ssr_get_subsys(subsystem->name);
-
 	/* Frontend qcom_ssr_notify_typ only supports 4 types with
 	 * different enum value.
 	 * Forward 0xFF to client for unknown types and forward return
@@ -93,10 +92,12 @@ static void subsystem_notif_wq_func(struct work_struct *work)
 			state = QCOM_SSR_TYPE_INVALID;
 			break;
 	}
-
-	ret = qcom_notify_ssr_clients(subsystem_handle, state, NULL);
-	writel_relaxed(ret, base_reg + subsystem->offset + CLIENT_STATE_OFFSET);
-	pr_debug("%s: receive %s interrupt with state: %d ret: %d\n", __func__, subsystem->name, state, ret);
+	if(subsystem_handle) {
+		ret = qcom_notify_ssr_clients(subsystem_handle, state, NULL);
+		writel_relaxed(ret, base_reg + subsystem->offset + CLIENT_STATE_OFFSET);
+		pr_debug("%s: receive %s interrupt with state: %d ret: %d\n", __func__,
+				subsystem->name, state, ret);
+	}
 }
 
 static int subsystem_state_callback(struct notifier_block *this,

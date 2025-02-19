@@ -974,7 +974,7 @@ static int hfastrpc_mem_map(struct vfastrpc_file *vfl,
 	ADSP_LOG("map vaddr=%lx\n", map->raddr);
 bail:
 	if (err) {
-		ADSPRPC_ERR("failed to map fd %d, len 0x%x, flags %d, map %pK, err %d\n",
+		ADSPRPC_ERR("failed to map fd %d, len 0x%zx, flags %d, map %pK, err %d\n",
 			ud->m.fd, ud->m.length, ud->m.flags, map, err);
 		if (map) {
 			mutex_lock(&fl->map_mutex);
@@ -1122,7 +1122,7 @@ static int context_build_overlap(struct vfastrpc_invoke_ctx *ctx)
 			if (err) {
 				err = -EFAULT;
 				ADSPRPC_ERR(
-					"Invalid address 0x%llx and size %zu\n",
+					"Invalid address 0x%lx and size %zu\n",
 					(uintptr_t)lpra[i].buf.pv,
 					lpra[i].buf.len);
 				goto bail;
@@ -1365,7 +1365,7 @@ static void context_free(struct vfastrpc_invoke_ctx *ctx)
 
 	if (domain < 0 || domain >= vfl->apps->num_channels) {
 		ADSPRPC_ERR(
-			"invalid channel 0x%zx set for session\n",
+			"invalid channel 0x%x set for session\n",
 								domain);
 		return;
 	}
@@ -1849,7 +1849,7 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 				VERIFY(err, offset + len <= (uintptr_t)map->size);
 				if (err) {
 					ADSPRPC_ERR(
-						"buffer address is invalid for the fd passed for %d address 0x%llx and size %zu\n",
+						"buffer address is invalid for the fd passed for %d address 0x%lx and size %zu\n",
 						i, (uintptr_t)lpra[i].buf.pv,
 						lpra[i].buf.len);
 					err = -EFAULT;
@@ -1940,7 +1940,7 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 		}
 		if (len > DEBUG_PRINT_SIZE_LIMIT)
 			ADSPRPC_DEBUG(
-				"copied non ion buffer sc 0x%x pv 0x%llx, mend 0x%llx mstart 0x%llx, len %zu\n",
+				"copied non ion buffer sc 0x%x pv 0x%llx, mend 0x%lx mstart 0x%lx, len %zu\n",
 				sc, rpra[i].buf.pv,
 				ctx->overps[oix]->mend,
 				ctx->overps[oix]->mstart, len);
@@ -1998,7 +1998,7 @@ static int put_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx,
 				rpra[i].buf.len);
 			if (err) {
 				ADSPRPC_ERR(
-					"Invalid size 0x%llx for output argument %d ret %ld\n",
+					"Invalid size 0x%llx for output argument %d ret %d\n",
 					rpra[i].buf.len, i+1, err);
 				err = -EFAULT;
 				goto bail;
@@ -2371,7 +2371,7 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 			fl->tgid, current->pid, inv->inv.sc, inv->inv.handle);
 	domain = vfl->domain;
 	if (domain < 0 || domain >= vfl->apps->num_channels) {
-		ADSPRPC_ERR("invalid channel 0x%zx set for session\n",
+		ADSPRPC_ERR("invalid channel 0x%x set for session\n",
 			domain);
 		err = -EBADR;
 		goto bail;

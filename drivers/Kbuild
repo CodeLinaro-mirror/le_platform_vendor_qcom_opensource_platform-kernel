@@ -29,7 +29,8 @@ ccflags-y += $(LINUX_INC)
 
 LINUXINCLUDE	+= \
 		   -I$(PLAT_DRV_ROOT)/include \
-		   -I$(PLAT_DRV_ROOT)/include/linux
+		   -I$(PLAT_DRV_ROOT)/include/linux \
+		   -I$(PLAT_DRV_ROOT)/include/soc/qcom
 
 ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 msmnile))
   LINUXINCLUDE	+= -I$(PLAT_DRV_ROOT)/drivers/virtual_fastrpc/include/uapi

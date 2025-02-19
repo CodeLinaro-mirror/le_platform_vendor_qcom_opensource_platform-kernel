@@ -756,8 +756,8 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			VERIFY(err, offset + len <= (uintptr_t)maps[i]->size);
 			if (err) {
 				dev_err(me->dev,
-						"buffer address is invalid for the fd passed for %d address 0x%llx and size %zu\n",
-						i, (uintptr_t)lpra[i].buf.pv, lpra[i].buf.len);
+						"buffer address is invalid for the fd passed for %d address %p and size %zu\n",
+						i, lpra[i].buf.pv, lpra[i].buf.len);
 				err = -EFAULT;
 				goto save_req_tx_buf;
 			}
@@ -1883,7 +1883,7 @@ static int vfastrpc_internal_mem_unmap(struct vfastrpc_file *vfl,
 	map = NULL;
 bail:
 	if (err) {
-		dev_err(me->dev, "%s failed to unmap fd %d addr 0x%llx length 0x%x err 0x%x\n",
+		dev_err(me->dev, "%s failed to unmap fd %d addr 0x%llx length 0x%zx err 0x%x\n",
 			__func__, ud->um.fd, ud->um.vaddr, ud->um.length, err);
 		/* Add back to map list in case of error to unmap on DSP */
 		if (map) {
