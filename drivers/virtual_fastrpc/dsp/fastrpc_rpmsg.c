@@ -7,6 +7,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/of_platform.h>
 #include <linux/rpmsg.h>
+#include <linux/of.h>
 
 #include "fastrpc_common.h"
 #include "fastrpc_core.h"
@@ -159,14 +160,14 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 		domain->id = -1;
 		for (i = 0; i <= CDSP1_DOMAIN_ID; i++) {
 			if (!strcmp(legacy_domains[i], name)) {
-				strlcpy(domain->name, legacy_domains[i], sizeof(domain->name));
+				strscpy(domain->name, legacy_domains[i], sizeof(domain->name));
 				domain->id = i;
 				break;
 			}
 		}
 
 		if (domain->id < 0) {
-			RPC_INFO("invalid domain name %s\n", domain);
+			RPC_INFO("invalid domain name\n");
 			return -ENOMEM;
 		}
 

@@ -1,0 +1,22 @@
+load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
+
+ddk_headers(
+    name = "fastrpc_local_headers",
+    hdrs = glob([
+	"drivers/virtual_fastrpc/include/uapi/*.h"
+    ]),
+    includes = ["drivers/virtual_fastrpc/include/uapi"],
+)
+
+ddk_headers(
+    name = "boot_marker_headers",
+    hdrs = glob([
+        "include/soc/qcom/boot_marker.h",
+        "include/soc/qcom/qcom_stats.h",
+    ]),
+    includes = ["include/soc/qcom"],
+)
+
+load(":build/autogvm.bzl", "define_autogvm")
+
+define_autogvm()

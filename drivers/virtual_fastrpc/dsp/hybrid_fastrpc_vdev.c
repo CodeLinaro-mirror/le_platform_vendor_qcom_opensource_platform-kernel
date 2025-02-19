@@ -14,6 +14,7 @@
 #include <linux/uaccess.h>
 #include <linux/of.h>
 #include <linux/rpmsg.h>
+#include <linux/version.h>
 #include "fastrpc_common.h"
 
 /* Virtio ID of FASTRPC : 0xC005 */
@@ -477,11 +478,20 @@ static void virt_init_vq(struct virt_fastrpc_vq *fastrpc_vq,
 static int init_vqs(struct fastrpc_common *gdriver)
 {
 	struct virtqueue *vqs[2];
+	int err, i;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	struct virtqueue_info vqs_info[] = {
+		{"tx", NULL },
+		{"rx", fastrpc_vq_callback },
+	};
+
+	err = virtio_find_vqs(gdriver->vdev, 2, vqs, vqs_info, NULL);
+#else
 	static const char * const names[] = { "tx", "rx" };
 	vq_callback_t *cbs[] = { NULL, fastrpc_vq_callback };
-	int err, i;
 
 	err = virtio_find_vqs(gdriver->vdev, 2, vqs, cbs, names, NULL);
+#endif
 	if (err)
 		return err;
 
@@ -658,7 +668,6 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 		RPC_WARN("failed to create debugfs root dir\n");
 		debugfs_root = NULL;
 	}
-
 	gdriver->debugfs_root = debugfs_root;
 #endif
 

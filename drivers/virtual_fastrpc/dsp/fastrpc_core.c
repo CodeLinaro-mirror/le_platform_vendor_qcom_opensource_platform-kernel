@@ -2637,13 +2637,13 @@ static int fastrpc_multidomain_ctx_cleanup(struct fastrpc_user *fl,
 	if (mdctx) {
 		err = virt_fastrpc_mdctx_remove(fl, ctx);
 		if (err) {
-			dev_err(dev, "Error %d: %s: BE failed to deregister mdctx %d\n",
+			dev_err(dev, "Error %d: %s: BE failed to deregister mdctx %llu\n",
 				err, __func__, ctx);
 			goto bail;
 		}
 	} else {
 		err = -ENOENT;
-		dev_err(dev, "Error %d: %s: don't find matched mdctx %d\n",
+		dev_err(dev, "Error %d: %s: don't find matched mdctx %llu\n",
 			err, __func__, ctx);
 		goto bail;
 	}
@@ -2830,7 +2830,7 @@ int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp)
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
 
-	RPC_DBG("raddr=0x%lx,size=0x%lx\n",
+	RPC_DBG("raddr=0x%llx,size=0x%llx\n",
 			req.vaddrout, req.size);
 	spin_lock(&fl->lock);
 	list_for_each_entry_safe(iter, b, &fl->mmaps, node) {
@@ -2871,7 +2871,7 @@ int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp)
 
 	err = fastrpc_req_munmap_dsp(fl, map->raddr, map->size);
 	if (err) {
-		RPC_ERR("unmmap dsp error, fd = %d, raddr = 0x%lx\n",
+		RPC_ERR("unmmap dsp error, fd = %d, raddr = 0x%llx\n",
 				map->fd, map->raddr);
 	} else {
 		mutex_lock(&fl->map_mutex);
@@ -2906,7 +2906,7 @@ int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 		return -EINVAL;
 	}
 
-	RPC_DBG("fd=%d,size=0x%lx,flags=0x%x\n",
+	RPC_DBG("fd=%d,size=0x%llx,flags=0x%x\n",
 			req.fd, req.size, req.flags);
 	if (req.flags == ADSP_MMAP_ADD_PAGES && !fl->is_unsigned_pd) {
 		if (req.vaddrin) {
@@ -2943,7 +2943,7 @@ int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 		/* GVM fastrpc can't send command to ROOT PD so we can't use zero pid here */
 		err = fastrpc_internal_invoke(fl, KERNEL_MSG_WITH_NONZERO_PID, &ioctl);
 		if (err) {
-			RPC_ERR("mmap error da=0x%lx,size=0x%lx\n",
+			RPC_ERR("mmap error da=0x%llx,size=0x%llx\n",
 					buf->da, buf->size);
 			goto err_invoke;
 		}
@@ -3009,13 +3009,13 @@ int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp)
 		}
 	}
 
-	RPC_DBG("map raddr = 0x%lx\n", rsp_msg.vaddr);
+	RPC_DBG("map raddr = 0x%llx\n", rsp_msg.vaddr);
 	return 0;
 err_copy:
 	if (req.flags != ADSP_MMAP_ADD_PAGES) {
 		err = fastrpc_req_munmap_dsp(fl, map->raddr, map->size);
 		if (err) {
-			RPC_ERR("unmmap dsp error, fd = %d, raddr = 0x%lx\n",
+			RPC_ERR("unmmap dsp error, fd = %d, raddr = 0x%llx\n",
 					map->fd, map->raddr);
 			map = NULL;
 		}
@@ -3152,7 +3152,7 @@ int fastrpc_req_mem_unmap(struct fastrpc_user *fl, char __user *argp)
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
 
-	RPC_DBG("fd=%d,raddr=0x%lx,size=0x%lx\n",
+	RPC_DBG("fd=%d,raddr=0x%llx,size=0x%llx\n",
 			req.fd, req.vaddr, req.length);
 
 	return fastrpc_req_mem_unmap_dsp(fl, req.fd, req.vaddr);
@@ -3172,7 +3172,7 @@ int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp)
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
 
-	RPC_DBG("fd=%d,size=0x%lx,flags=0x%x,attrs=0x%x\n",
+	RPC_DBG("fd=%d,size=0x%llx,flags=0x%x,attrs=0x%x\n",
 			req.fd, req.length, req.flags, req.attrs);
 
 	mutex_lock(&fl->map_mutex);
@@ -3206,7 +3206,7 @@ int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp)
 		return -EFAULT;
 	}
 
-	RPC_DBG("map raddr = 0x%lx\n", map->raddr);
+	RPC_DBG("map raddr = 0x%llx\n", map->raddr);
 
 	return 0;
 }

@@ -3,7 +3,8 @@
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
-
+#include <linux/version.h>
+#include <linux/vmalloc.h>
 #include "fastrpc_mem.h"
 #include "fastrpc_vq.h"
 
@@ -17,13 +18,13 @@ struct fastrpc_smmu_map {
 struct virt_smmu_map_msg {
 	struct virt_msg_hdr hdr;		/* virtio fastrpc message header */
 	u32 nents;				/* number of map entries */
-	struct fastrpc_smmu_map smmu_map[0];	/* smmu map list */
+	struct fastrpc_smmu_map smmu_map[];	/* smmu map list */
 } __packed;
 
 struct virt_smmu_unmap_msg {
 	struct virt_msg_hdr hdr;		/* virtio fastrpc message header */
 	u32 nents;				/* number of unmap entries */
-	u64 da[0];				/* smmu unmap da list */
+	u64 da[];				/* smmu unmap da list */
 } __packed;
 
 #define FASTRPC_MAX_CACHED_BUFS (32)
@@ -39,7 +40,11 @@ static inline void fastrpc_free_pages(struct page **pages, unsigned int count)
 static struct page **fastrpc_alloc_pages(struct device *dev, unsigned int count, gfp_t gfp)
 {
 	struct page **pages;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	unsigned long order_mask = (2U << NR_PAGE_ORDERS) - 1;
+#else
 	unsigned long order_mask = (2U << MAX_ORDER) - 1;
+#endif
 	unsigned int i = 0, nid = dev_to_node(dev);
 
 	pages = kvzalloc(count * sizeof(*pages), GFP_KERNEL);
@@ -222,7 +227,7 @@ static int virt_smmu_map(struct fastrpc_user *fl, u32 attr,
 	if (err)
 		goto bail;
 	if (!rsp->smmu_map[0].da) {
-		RPC_ERR("invalid smmu da 0x%lx\n", rsp->smmu_map[0].da);
+		RPC_ERR("invalid smmu da 0x%llx\n", rsp->smmu_map[0].da);
 		err = -EFAULT;
 		goto bail;
 	}
@@ -244,7 +249,7 @@ static int virt_smmu_unmap(struct fastrpc_user *fl, uint64_t da)
 	struct virt_fastrpc_msg *msg;
 	int err, total_size;
 
-	RPC_DBG("smmu unmap da = 0x%lx\n", da);
+	RPC_DBG("smmu unmap da = 0x%llx\n", da);
 	spin_lock(&fl->lock);
 	if (fl->state >= DSP_EXIT_START) {
 		spin_unlock(&fl->lock);
@@ -284,7 +289,7 @@ static int virt_smmu_unmap(struct fastrpc_user *fl, uint64_t da)
 		goto bail;
 bail:
 	if (err)
-		RPC_ERR("failed to unmap smmu da = 0x%lx\n", da);
+		RPC_ERR("failed to unmap smmu da = 0x%llx\n", da);
 	if (rsp)
 		fastrpc_rxbuf_send(fl, rsp, gdriver->buf_size);
 	virt_free_msg(fl, msg);
@@ -342,10 +347,10 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 	struct scatterlist *sgl = NULL;
 	u32 map_attr = FASTRPC_MAP_ATTR_CACHED;
 
-	RPC_DBG("fd=%d,va=%lx,len=0x%lx\n", fd, va, len);
+	RPC_DBG("fd=%d,va=%llx,len=0x%llx\n", fd, va, len);
 	if (!fastrpc_map_lookup(fl, fd, va, len, mflags, ppmap, take_ref)) {
 		if (!(*ppmap)->da)
-			RPC_ERR("find invalid map, fd=%d,va=%lx,len=0x%lx\n",
+			RPC_ERR("find invalid map, fd=%d,va=%llx,len=0x%llx\n",
 					fd, va, len);
 		return 0;
 	}
@@ -422,7 +427,7 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 		list_add_tail(&map->node, &fl->maps);
 		spin_unlock(&fl->lock);
 		*ppmap = map;
-		RPC_DBG("Create new map 0x%lx,flags=0x%x,attr=0x%x,da=0x%lx\n",
+		RPC_DBG("Create new map %p,flags=0x%x,attr=0x%x,da=0x%llx\n",
 				map, map->flags, map->attr, map->da);
 	}
 
@@ -447,7 +452,7 @@ void fastrpc_free_map(struct fastrpc_map *map)
 	if (!map)
 		return;
 
-	RPC_DBG("free map 0x%lx, attr=%x\n",
+	RPC_DBG("free map %p, attr=%x\n",
 			map, map->attr);
 	fl = map->fl;
 	if (fl) {
@@ -620,7 +625,7 @@ static int __fastrpc_buf_alloc(struct fastrpc_user *fl, u32 domain_id,
 	buf->domain_id = domain_id;
 	buf->pages = fastrpc_alloc_buffer(fl->cctx->dev, buf, GFP_KERNEL, PAGE_KERNEL);
 	if (IS_ERR_OR_NULL(buf->pages)) {
-		RPC_ERR("fastrpc_alloc_buffer failed for size 0x%lx, returned %ld\n",
+		RPC_ERR("fastrpc_alloc_buffer failed for size 0x%llx, returned %ld\n",
 			size, PTR_ERR(buf->pages));
 		goto bail;
 	}

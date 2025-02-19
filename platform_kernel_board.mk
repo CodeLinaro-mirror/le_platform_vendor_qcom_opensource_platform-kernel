@@ -54,7 +54,6 @@ endif
 
 endif
 endif
-
 # Drivers for Talos only
 ifeq ($(call is-board-platform-in-list,sm6150), true)
 ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))
