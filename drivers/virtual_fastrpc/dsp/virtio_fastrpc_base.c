@@ -309,12 +309,12 @@ static void virt_init_vq(struct virt_fastrpc_vq *fastrpc_vq,
 static void vfastrpc_unused_tx_bufs_list_free(struct vfastrpc_apps *me)
 {
 	struct vfastrpc_vqbuf *vtxbuf, *free;
+	struct hlist_node *n;
 
 	if (hlist_empty(&me->unused_tx_bufs))
 		return;
 	do {
 		free = NULL;
-		struct hlist_node *n;
 		hlist_for_each_entry_safe(vtxbuf, n, &me->unused_tx_bufs, hn) {
 			free = vtxbuf;
 			hlist_del_init(&vtxbuf->hn);
