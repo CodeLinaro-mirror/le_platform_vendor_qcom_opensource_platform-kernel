@@ -1137,6 +1137,8 @@ bail:
 					ctx->perf, M_KERNEL_PERF_LIST*sizeof(uint64_t));
 		lseq_num = ctx->seq_num;
 		context_free(ctx);
+		if (fl->profile)
+			perf_counter = NULL;
 		trace_fastrpc_internal_invoke_end(invoke->handle, invoke->sc, lseq_num);
 	}
 
