@@ -1,5 +1,5 @@
 #SPDX-License-Identifier: GPL-2.0-only
-ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4), true)
+ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4 gen5), true)
 # Drivers for both Metal and GVM
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
