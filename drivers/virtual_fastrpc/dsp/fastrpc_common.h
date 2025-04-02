@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __FASTRPC_COMMON_H__
@@ -302,6 +302,11 @@ struct virt_cap_msg {
 	u32 dsp_caps[FASTRPC_MAX_DSP_ATTRIBUTES];	/* DSP capability */
 } __packed;
 
+struct vfastrpc_vqbuf {
+	struct hlist_node hn;
+	void *buf;
+};
+
 struct vfastrpc_channel_ctx {
 	char *name;
 	char *subsys;
@@ -343,6 +348,7 @@ struct vfastrpc_apps {
 	unsigned int buf_size;
 	unsigned int num_channels;
 	int last_sbuf;
+	struct hlist_head unused_tx_bufs;
 
 	bool has_invoke_attr;
 	bool has_invoke_crc;

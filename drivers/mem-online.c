@@ -68,7 +68,6 @@ static int mem_online_remaining_blocks(void)
 		delta = block_size - (memblock_end_of_DRAM() % block_size);
 		pr_debug("mem_online: memblock end of dram address not aligned to memory block size of %lukB!\n", block_size);
 		pr_debug("mem_online: memory%lu is partially available; %lukB of memory will be less in this block\n", start_section_nr, delta / SZ_1K);
-
 		/*
 		 * since this section is partially added during boot, we cannot
 		 * add the remaining part of section using add_memory since it
@@ -76,22 +75,7 @@ static int mem_online_remaining_blocks(void)
 		 * onlinable region from the next section onwards.
 		 */
 		start_section_nr += 1;
-
 	}
-
-	if (bootmem_dram_end_addr % block_size) {
-		delta = bootmem_dram_end_addr % block_size;
-		pr_debug("mem_online: bootmem end of dram address is not aligned to memory block size!\n");
-		pr_debug("mem_online: memory%lu will not be added; %lukB of memory will be less to match with block size!\n", end_section_nr, delta / SZ_1K);
-
-		/*
-		 * since this section cannot be added, the last section of onlinable
-		 * region will be the previous section.
-		 */
-		end_section_nr -= 1;
-	}
-
-	onlinable_region_start_addr = section_nr_to_pfn(__pfn_to_phys(start_section_nr));
 
 	/*
 	 * below check holds true if there were only one onlinable section
@@ -99,7 +83,7 @@ static int mem_online_remaining_blocks(void)
 	 */
 	if (start_section_nr > end_section_nr)
 		return 1;
-
+	onlinable_region_start_addr = section_nr_to_pfn(__pfn_to_phys(start_section_nr));
 	pr_debug("mem_online: onlinable_region_start_addr 0x%lx\n", onlinable_region_start_addr);
 	pr_debug("mem_online: start_section_nr = %llu end_section_nr = %llu\n", start_section_nr, end_section_nr);
 

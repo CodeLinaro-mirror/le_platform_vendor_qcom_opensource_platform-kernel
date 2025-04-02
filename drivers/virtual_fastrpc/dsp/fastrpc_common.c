@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "fastrpc_common.h"
@@ -153,7 +153,7 @@ struct virt_fastrpc_msg *virt_alloc_msg(struct vfastrpc_file *vfl, int size)
 		return NULL;
 	}
 
-	buf = get_a_tx_buf(vfl);
+	buf = get_a_tx_buf(me);
 	if (!buf) {
 		dev_err(me->dev, "can't get tx buffer\n");
 		virt_free_msg(vfl, msg);
