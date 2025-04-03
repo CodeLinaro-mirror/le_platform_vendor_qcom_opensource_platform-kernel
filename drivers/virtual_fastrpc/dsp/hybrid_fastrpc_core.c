@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -2466,6 +2466,8 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 			}
 		}
 		context_free(ctx);
+		if (fl->profile)
+			perf_counter = NULL;
 	}
 	if (domain >= 0 && domain < vfl->apps->num_channels) {
 		mutex_lock(&(vfl->apps->channel[domain].smd_mutex));
