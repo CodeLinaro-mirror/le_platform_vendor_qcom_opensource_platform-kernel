@@ -85,7 +85,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x6
+#define FE_MINOR_VER 0x7
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -581,6 +581,7 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 	memset(gdriver, 0, sizeof(*gdriver));
 	spin_lock_init(&gdriver->msglock);
 	spin_lock_init(&gdriver->glock);
+	mutex_init(&gdriver->gmut);
 
 	vdev->priv = gdriver;
 	gdriver->vdev = vdev;
@@ -702,6 +703,7 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 		kfree(g_domain_info);
 	}
 
+	mutex_destroy(&gdriver->gmut);
 	fastrpc_transport_deinit();
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
