@@ -340,6 +340,7 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 	struct fastrpc_map *map = NULL;
 	int err = 0, sgl_index = 0;
 	struct scatterlist *sgl = NULL;
+	u32 map_attr = FASTRPC_MAP_ATTR_CACHED;
 
 	RPC_DBG("fd=%d,va=%lx,len=0x%lx\n", fd, va, len);
 	if (!fastrpc_map_lookup(fl, fd, va, len, mflags, ppmap, take_ref)) {
@@ -369,6 +370,18 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 		err = -EINVAL;
 		goto get_err;
 	} else {
+		if (IS_EXTENDED_MAP_FLAG(mflags)) {
+			if ((len < SMMU_2M) || (len % SMMU_1M != 0)) {
+				err = -EOPNOTSUPP;
+				RPC_ERR("invalid size 0x%llx. Size should be \
+					a multiple of 0x%llx and greater than \
+					0x%llx for map flag %d\n",
+					len, SMMU_1M, SMMU_2M, mflags);
+				goto get_err;
+			}
+			map_attr |= FASTRPC_MAP_ATTR_EXTENDED;
+		}
+
 		map->buf = dma_buf_get(fd);
 		if (IS_ERR(map->buf)) {
 			RPC_ERR("failed to get dma buf fd %d\n", fd);
@@ -396,7 +409,7 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 			map->size += sg_dma_len(sgl);
 		map->va = (void *) (uintptr_t) va;
 
-		err = virt_smmu_map(fl, FASTRPC_MAP_ATTR_CACHED,
+		err = virt_smmu_map(fl, map_attr,
 					map->table->sgl,
 					map->table->nents,
 					&map->da);

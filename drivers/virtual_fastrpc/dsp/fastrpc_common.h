@@ -93,12 +93,21 @@
 #define USER_UNSIGNEDPD_POOL		9
 #define MAX_PD_TYPE			10
 
+#define SMMU_1M				0x100000ULL
+#define SMMU_2M				0x200000ULL
+#define SMMU_1G				0x40000000ULL
+/* Check if the given flag is used for extended UDMA mapping */
+#define IS_EXTENDED_MAP_FLAG(flag) \
+	(flag == FASTRPC_MAP_FD_EXTENDED || \
+	 flag == FASTRPC_MAP_FD_DELAYED_EXTENDED)
+
 /* set for cached mapping */
 #define FASTRPC_MAP_ATTR_CACHED		1
 
 /* set for multiple level SGT */
 #define FASTRPC_MAP_ATTR_MULTI_LEVEL_SGT	(1U << 1) /* 1: Multiple level sglist, 0: One level sglist */
-
+/* set for extended map */
+#define FASTRPC_MAP_ATTR_EXTENDED		(1U << 2) /* 1: uDMA64 on extended CB, 0: regular CB */
 /* Fastrpc attribute  for already mapped buffer */
 #define FASTRPC_MAP_ATTR_BUFFER_MAPPED (128)
 
