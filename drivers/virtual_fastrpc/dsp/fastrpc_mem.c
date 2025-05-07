@@ -303,7 +303,6 @@ int fastrpc_map_lookup(struct fastrpc_user *fl, int fd,
 	struct fastrpc_map *map = NULL;
 	int ret = -ENOENT;
 
-	spin_lock(&fl->lock);
 	if (mflags == ADSP_MMAP_DMA_BUFFER ||
 			mflags == ADSP_MMAP_HEAP_ADDR ||
 			mflags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
@@ -311,6 +310,7 @@ int fastrpc_map_lookup(struct fastrpc_user *fl, int fd,
 		return -EINVAL;
 	}
 
+	spin_lock(&fl->lock);
 	list_for_each_entry(map, &fl->maps, node) {
 		if (map->fd == fd && va >= (u64)map->va &&
 				va + len >= va &&
@@ -461,7 +461,7 @@ void fastrpc_free_map(struct fastrpc_map *map)
 		spin_unlock(&map->fl->lock);
 	}
 
-	if (map->da)
+	if (fl && map->da)
 		virt_smmu_unmap(fl, map->da);
 
 	if (map->table) {

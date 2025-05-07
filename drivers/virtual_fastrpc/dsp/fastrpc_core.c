@@ -2194,7 +2194,7 @@ static int fastrpc_get_notif_response(struct fastrpc_internal_notif_rsp *notif,
 	if (legacy_domains) {
 		if (is_device_discovery_supported()) {
 			domain = fastrpc_lookup_domain_in_table(notif->domain, false);
-			if (domain->legacy)
+			if (domain && domain->legacy)
 				notif->domain = domain->legacy_id;
 		}
 	}
@@ -3019,7 +3019,7 @@ err_copy:
 					map->fd, map->raddr);
 			map = NULL;
 		}
-	} else {
+	} else if(buf) {
 		err = fastrpc_req_munmap_dsp(fl, buf->raddr, buf->size);
 		if (err) {
 			RPC_ERR("unmmap dsp error, raddr = 0x%lx\n",
