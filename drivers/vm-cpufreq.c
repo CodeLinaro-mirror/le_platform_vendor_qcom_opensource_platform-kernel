@@ -14,6 +14,7 @@
 #include <linux/pm_opp.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 
 static struct platform_device *vm_cpufreq_pdev;
 
@@ -107,10 +108,16 @@ static int vm_cpufreq_probe(struct platform_device *pdev)
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,10,0))
+static void vm_cpufreq_remove(struct platform_device *pdev)
+#else
 static int vm_cpufreq_remove(struct platform_device *pdev)
+#endif
 {
 	cpufreq_unregister_driver(&vm_cpufreq_driver);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,10,0))
 	return 0;
+#endif
 }
 
 static struct platform_driver vm_cpufreq_platdrv = {
