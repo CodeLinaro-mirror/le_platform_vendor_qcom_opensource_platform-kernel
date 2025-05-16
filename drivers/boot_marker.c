@@ -19,13 +19,13 @@
 #include <linux/suspend.h>
 #include <linux/uaccess.h>
 #include <soc/qcom/qcom_stats.h>
+#include <soc/qcom/boot_marker.h>
 #include <linux/hashtable.h>
 
 #if IS_ENABLED(CONFIG_BOOTMARKER_PROXY)
 #include <linux/bootmarker_kernel.h>
 #endif
 
-int place_marker(const char *name);
 void destroy_marker_kernel(const char *name);
 unsigned long long msm_timer_get_sclk_ticks_kernel(void);
 static inline int boot_marker_enabled(void) { return 1; }

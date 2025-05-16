@@ -1,10 +1,12 @@
 #SPDX-License-Identifier: GPL-2.0-only
 ifneq (,$(call is-board-platform-in-list2, $(MSMSTEPPE) msmnile gen4))
 # Drivers for both Metal and GVM
+ifneq ($(filter $(PLATFORM_VERSION), 16 Baklava),$(PLATFORM_VERSION))
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/boot_marker.ko
+endif
 
 ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for Metal only
@@ -38,6 +40,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATF
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/mem-online.ko
 else
 # Drivers for GVM only
+ifneq ($(filter $(PLATFORM_VERSION), 16 Baklava),$(PLATFORM_VERSION))
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/socinfo_dt.ko
@@ -66,7 +69,7 @@ endif
 
 endif
 endif
-
+endif
 # Drivers for Talos only
 ifneq (,$(call is-board-platform-in-list2,sm6150))
 ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))

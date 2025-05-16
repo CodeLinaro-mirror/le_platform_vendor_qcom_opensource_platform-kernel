@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/list.h>
 #include "virtio_fastrpc_queue.h"
 
-void *get_a_tx_buf(struct vfastrpc_file *vfl)
+
+int put_a_tx_buf(struct vfastrpc_apps *me, void *buf)
 {
-	struct vfastrpc_apps *me = vfl->apps;
+	struct vfastrpc_vqbuf *vtxbuf;
+
+	vtxbuf = kzalloc(sizeof(*vtxbuf), GFP_KERNEL);
+	if (!vtxbuf)
+		return -ENOMEM;
+
+	vtxbuf->buf = buf;
+	INIT_HLIST_NODE(&vtxbuf->hn);
+	spin_lock(&me->svq.vq_lock);
+	hlist_add_head(&vtxbuf->hn, &me->unused_tx_bufs);
+	spin_unlock(&me->svq.vq_lock);
+	return 0;
+}
+
+void *get_a_tx_buf(struct vfastrpc_apps *me)
+{
+	struct vfastrpc_vqbuf *vtxbuf = NULL;
 	unsigned int len;
-	void *ret;
+	void *ret = NULL;
 	unsigned long flags;
 
 	/* support multiple concurrent senders */
@@ -19,11 +37,18 @@ void *get_a_tx_buf(struct vfastrpc_file *vfl)
 	 * either pick the next unused tx buffer
 	 * (half of our buffers are used for sending messages)
 	 */
-	if (me->last_sbuf < me->num_bufs)
-		ret = me->sbufs[me->last_sbuf++];
+	if (!hlist_empty(&me->unused_tx_bufs)) {
+		struct hlist_node *n;
+		hlist_for_each_entry_safe(vtxbuf, n, &me->unused_tx_bufs, hn) {
+			ret = vtxbuf->buf;
+			hlist_del_init(&vtxbuf->hn);
+			kfree(vtxbuf);
+			break;
+		}
 	/* or recycle a used one */
-	else
+	} else {
 		ret = virtqueue_get_buf(me->svq.vq, &len);
+	}
 	spin_unlock_irqrestore(&me->svq.vq_lock, flags);
 	return ret;
 }

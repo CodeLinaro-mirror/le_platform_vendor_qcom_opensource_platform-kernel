@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 ifneq (,$(call is-board-platform-in-list2, $(MSMSTEPPE) msmnile gen4))
 # Drivers for both Metal and GVM
+ifneq ($(filter $(PLATFORM_VERSION), 16 Baklava),$(PLATFORM_VERSION))
     PRODUCT_PACKAGES += wallpower_charger.ko
     PRODUCT_PACKAGES += boot_marker.ko
+endif
 
 ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 # Drivers for Metal only
@@ -15,6 +17,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATF
     PRODUCT_PACKAGES += mem-online.ko
 else
 # Drivers for GVM only
+ifneq ($(filter $(PLATFORM_VERSION), 16 Baklava),$(PLATFORM_VERSION))
     PRODUCT_PACKAGES += socinfo_dt.ko
 ifneq ($(TARGET_USES_GY), true)
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
@@ -27,6 +30,7 @@ ifeq ($(TARGET_HAS_VIRTIO_FASTRPC), true)
 endif
 ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
     PRODUCT_PACKAGES += hfastrpc.ko
+endif
 endif
 endif
 endif

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ion.h>
@@ -573,7 +573,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 	struct virt_invoke_msg *vmsg;
 	int inbufs = REMOTE_SCALARS_INBUFS(ctx->sc);
 	int outbufs = REMOTE_SCALARS_OUTBUFS(ctx->sc);
-	int i, j, err = 0, bufs, handles, total;
+	int i, j, err = 0, err1 = 0, bufs, handles, total;
 	remote_arg_t *lpra = ctx->lpra;
 	int *fds = ctx->fds;
 	struct virt_fastrpc_buf *rpra;
@@ -749,7 +749,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			VERIFY(err, NULL != (vma = find_vma(current->mm, maps[i]->va)));
 			if (err) {
 				up_read(&current->mm->mmap_lock);
-				goto bail;
+				goto save_req_tx_buf;
 			}
 			offset = buf - vma->vm_start;
 			up_read(&current->mm->mmap_lock);
@@ -759,7 +759,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 						"buffer address is invalid for the fd passed for %d address 0x%llx and size %zu\n",
 						i, (uintptr_t)lpra[i].buf.pv, lpra[i].buf.len);
 				err = -EFAULT;
-				goto bail;
+				goto save_req_tx_buf;
 			}
 			rpra[i].offset = offset;
 			rpra[i].payload_len = get_size_of_mapping(maps[i]);
@@ -823,7 +823,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 				K_COPY_FROM_USER(err, 0, ctx->desc[i].buf->va,
 						lpra[i].buf.pv, len);
 				if (err)
-					goto bail;
+					goto save_req_tx_buf;
 			}
 
 			payload += rpra[i].payload_len;
@@ -840,7 +840,7 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 				K_COPY_FROM_USER(err, 0, payload,
 						lpra[i].buf.pv, len);
 				if (err)
-					goto bail;
+					goto save_req_tx_buf;
 				calc_compare_crc(ctx, (uint8_t *)payload, (int)len,
 						&(rpra[i].crc), NULL);
 			}
@@ -885,6 +885,12 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			payload += rpra[i].payload_len;
 		}
 	}
+	return 0;
+
+save_req_tx_buf:
+	err1 = put_a_tx_buf(me, ctx->msg->txbuf);
+	if (err1)
+		dev_err(me->dev, "put tx buf failed err = %d\n", err1);
 bail:
 	return err;
 }
@@ -1131,6 +1137,8 @@ bail:
 					ctx->perf, M_KERNEL_PERF_LIST*sizeof(uint64_t));
 		lseq_num = ctx->seq_num;
 		context_free(ctx);
+		if (fl->profile)
+			perf_counter = NULL;
 		trace_fastrpc_internal_invoke_end(invoke->handle, invoke->sc, lseq_num);
 	}
 

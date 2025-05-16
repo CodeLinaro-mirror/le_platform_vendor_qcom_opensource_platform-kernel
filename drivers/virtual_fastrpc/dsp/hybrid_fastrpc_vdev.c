@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -671,6 +671,25 @@ static void virt_init_vq(struct virt_fastrpc_vq *fastrpc_vq,
 	fastrpc_vq->vq = vq;
 }
 
+static void hfastrpc_unused_tx_bufs_list_free(struct vfastrpc_apps *me)
+{
+	struct vfastrpc_vqbuf *vtxbuf, *free;
+	struct hlist_node *n;
+
+	if (hlist_empty(&me->unused_tx_bufs))
+		return;
+	do {
+		free = NULL;
+		hlist_for_each_entry_safe(vtxbuf, n, &me->unused_tx_bufs, hn) {
+			free = vtxbuf;
+			hlist_del_init(&vtxbuf->hn);
+			break;
+		}
+		if (free)
+			kfree(free);
+	} while(free);
+}
+
 static int init_vqs(struct vfastrpc_apps *me)
 {
 	struct virtqueue *vqs[2];
@@ -724,8 +743,17 @@ static int init_vqs(struct vfastrpc_apps *me)
 			goto sbuf_del;
 		}
 	}
-	return 0;
 
+	INIT_HLIST_HEAD(&me->unused_tx_bufs);
+	for (i = 0; i < me->num_bufs; i++) {
+		err = put_a_tx_buf(me, me->sbufs[i]);
+		if (err) {
+			goto list_del;
+		}
+	}
+	return 0;
+list_del:
+	hfastrpc_unused_tx_bufs_list_free(me);
 sbuf_del:
 	for (i = 0; i < me->num_bufs; i++) {
 		if (me->sbufs[i])
@@ -1079,6 +1107,7 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
 
+	hfastrpc_unused_tx_bufs_list_free(me);
 	for (i = 0; i < me->num_bufs; i++)
 		free_pages((unsigned long)me->rbufs[i], me->order);
 	for (i = 0; i < me->num_bufs; i++)
