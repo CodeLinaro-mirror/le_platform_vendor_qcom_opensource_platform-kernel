@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+ccflags-y += $(LINUX_INC)
+
+LINUXINCLUDE	+= \
+		   -I$(PLAT_DRV_ROOT)/include \
+		   -I$(PLAT_DRV_ROOT)/include/linux
+
+rsm_fe-objs := virtio_rsm_base.o\
+			virtio_rsm_client.o
+
+obj-$(CONFIG_VIRTIO_RSMFE) += rsm_fe.o

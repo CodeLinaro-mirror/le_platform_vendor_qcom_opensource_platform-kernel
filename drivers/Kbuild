@@ -56,4 +56,6 @@ obj-$(CONFIG_QCOM_MEM_ONLINE) += mem-online.o
 ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 msmnile))
   obj-m				+= virtual_fastrpc/
 endif
+  obj-m				+= rsm_fe/
+
 obj-$(CONFIG_MSM_BOOT_MARKER)	+= boot_marker.o
