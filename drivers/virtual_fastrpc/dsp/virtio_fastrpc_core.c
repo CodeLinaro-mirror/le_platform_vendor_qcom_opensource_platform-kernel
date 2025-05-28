@@ -251,7 +251,7 @@ static void context_free(struct vfastrpc_invoke_ctx *ctx)
 		ctx->desc = NULL;
 	}
 
-	if (fl->profile)
+	if (fl->profile && ctx->perf)
 		kfree(ctx->perf);
 
 	kfree(ctx);
@@ -513,7 +513,6 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t msg_type, s64 seq_n
 		ctx->perf = kzalloc(sizeof(*(ctx->perf)), GFP_KERNEL);
 		VERIFY(err, !IS_ERR_OR_NULL(ctx->perf));
 		if (err) {
-			kfree(ctx->perf);
 			err = -ENOMEM;
 			goto bail;
 		}

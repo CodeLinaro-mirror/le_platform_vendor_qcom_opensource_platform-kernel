@@ -872,6 +872,7 @@ static int hfastrpc_mem_map_to_dsp(struct vfastrpc_file *vfl, int fd, int offset
 	ra[1].buf.len = sizeof(page);
 	ra[2].buf.pv = (void *)&page;
 	ra[2].buf.len = 0;
+	routargs.vaddrout = 0;
 	ra[3].buf.pv = (void *)&routargs;
 	ra[3].buf.len = sizeof(routargs);
 
@@ -1870,7 +1871,7 @@ static int get_args(uint32_t kernel, struct vfastrpc_invoke_ctx *ctx)
 	for (i = bufs; i < bufs + handles; ++i) {
 		struct vfastrpc_mmap *mmap = NULL;
 		/* check if map  was created */
-		if (ctx->maps[i]) {
+		if (ctx->maps[i] && ctx->fds) {
 			/* check if map still exist */
 			if (!vfastrpc_mmap_find(ctx->vfl, ctx->fds[i], 0, 0,
 				0, 0, &mmap)) {
