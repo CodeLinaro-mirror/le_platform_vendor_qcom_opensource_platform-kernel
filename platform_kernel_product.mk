@@ -15,6 +15,7 @@ ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy gen5_gvm_gy gen5_gvm,
 else
 # Drivers for GVM only
     PRODUCT_PACKAGES += socinfo_dt.ko
+    PRODUCT_PACKAGES += virtio_ssr.ko
 ifneq ($(TARGET_USES_GY), true)
     PRODUCT_PACKAGES += subsystem_notif_virt.ko
     PRODUCT_PACKAGES += vm-cpufreq.ko

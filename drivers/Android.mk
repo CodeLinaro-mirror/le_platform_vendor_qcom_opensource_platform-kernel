@@ -5,6 +5,7 @@ PM_SILENT_MODE_SELECT := CONFIG_PM_SILENT_MODE=m
 DUMP_BOOT_LOG_SELECT := CONFIG_DUMP_XBL_LOG=m
 SOCINFO_DT_SELECT := CONFIG_QCOM_SOCINFO_DT=m
 SUBSYSTEM_NOTIF_VIRT_SELECT := CONFIG_MSM_QUIN_SUBSYSTEM_NOTIF_VIRT=m
+VIRTIO_SSR_SELECT := CONFIG_VIRTIO_SSR=m
 QCOM_ADSP_VOTE_SMP2P_SELECT := CONFIG_QCOM_ADSP_VOTE_SMP2P=m
 CPUFREQ_VM_SELECT := CONFIG_CPUFREQ_VM=m
 MSM_S2R_WAKEUP_MARKER := CONFIG_MSM_S2R_WAKEUP_MARKER=m
@@ -285,6 +286,30 @@ LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 ifneq ($(TARGET_BOARD_AUTO),true)
 LOCAL_REQUIRED_MODULES    += subsystem_notif_virt_select-module-symvers
 LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,subsystem_notif_virt_select-module-symvers)/Module.symvers
+endif
+
+include $(DLKM_DIR)/Build_external_kernelmodule.mk
+
+##########################################################
+KBUILD_OPTIONS += MODNAME=virtio-ssr
+KBUILD_OPTIONS += $(VIRTIO_SSR)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(PWD)/$(call intermediates-dir-for,DLKM,virtio_ssr_select-module-symvers)/Module.symvers
+endif
+
+###########################################################
+include $(CLEAR_VARS)
+LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
+LOCAL_MODULE              := virtio_ssr.ko
+LOCAL_MODULE_KBUILD_NAME  := virtio_ssr.ko
+LOCAL_MODULE_TAGS         := optional
+LOCAL_MODULE_DEBUG_ENABLE := true
+LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
+
+ifneq ($(TARGET_BOARD_AUTO),true)
+LOCAL_REQUIRED_MODULES    += virtio_ssr_select-module-symvers
+LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,virtio_ssr_select-module-symvers)/Module.symvers
 endif
 
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
