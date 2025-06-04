@@ -834,6 +834,8 @@ static int fastrpc_create_persistent_headers(struct fastrpc_user *fl)
 	}
 	spin_unlock(&fl->lock);
 
+	RPC_DBG("create %u num persistent headers\n", num_pers_hdrs);
+
 	return 0;
 err_dsp_map:
 	RPC_ERR("failed to map len %zu, flags %d, num headers %u with err %d\n",
@@ -1101,7 +1103,8 @@ int fastrpc_init_create_process(struct fastrpc_user *fl, char __user *argp)
 	if (err)
 		return err;
 
-	if (fl->cctx->domain->type == FASTRPC_NSP)
+	if (fl->cctx->domain->type == FASTRPC_NSP ||
+			fl->cctx->domain->type == FASTRPC_HPASS)
 		fastrpc_create_persistent_headers(fl);
 #ifdef CONFIG_DEBUG_FS
 	fastrpc_create_session_debugfs(fl);

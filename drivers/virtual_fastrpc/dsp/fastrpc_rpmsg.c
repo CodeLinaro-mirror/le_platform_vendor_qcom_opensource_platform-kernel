@@ -202,7 +202,8 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	data->unsigned_support = false;
 	data->cpuinfo_todsp = FASTRPC_CPUINFO_DEFAULT;
 
-	if (domain->type == FASTRPC_NSP) {
+	if (domain->type == FASTRPC_NSP ||
+			domain->type == FASTRPC_HPASS) {
 		data->unsigned_support = true;
 		data->cpuinfo_todsp = FASTRPC_CPUINFO_EARLY_WAKEUP;
 	}

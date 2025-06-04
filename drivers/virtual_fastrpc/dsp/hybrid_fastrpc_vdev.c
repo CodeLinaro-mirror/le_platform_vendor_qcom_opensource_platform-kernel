@@ -262,7 +262,8 @@ static int fastrpc_add_domain_to_table(struct fastrpc_domain **domain,
 		mutex_lock(hmut);
 		hash_add(g_frpc.fastrpc_domains_table, &entry->node, phy_id);
 
-		if (instance_id == 0 || (type == FASTRPC_NSP && instance_id == 1))  {
+		if ((type != FASTRPC_HPASS && instance_id == 0) ||
+				(type == FASTRPC_NSP && instance_id == 1))  {
 			/*
 			 * For LPASS, SDSP types only the dsp with instance_id 0 is
 			 *                 assigned as legacy adsp, slpi domains

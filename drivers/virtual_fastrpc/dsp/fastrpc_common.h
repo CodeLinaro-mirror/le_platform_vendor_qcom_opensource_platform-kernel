@@ -564,9 +564,9 @@ static const char *fastrpc_dsp_type_labels[FASTRPC_MAX_DSP_TYPE] =
 {
 	NULL,
 	"nsp",
-	NULL,
-	NULL,
-	NULL,
+	"lpass",
+	"sdsp",
+	"mdsp",
 	"hpass"
 };
 
