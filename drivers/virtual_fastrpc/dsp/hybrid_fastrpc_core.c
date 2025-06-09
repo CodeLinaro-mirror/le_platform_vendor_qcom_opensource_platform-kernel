@@ -592,6 +592,7 @@ static int hfastrpc_mmap_on_dsp(struct vfastrpc_file *vfl, uint32_t flags,
 	ra[1].buf.pv = (void *)&page;
 	ra[1].buf.len = num * sizeof(page);
 
+	routargs.vaddrout = 0;
 	ra[2].buf.pv = (void *)&routargs;
 	ra[2].buf.len = sizeof(routargs);
 
