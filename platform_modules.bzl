@@ -1,5 +1,6 @@
 DRIVERS_PATH = "drivers"
 DSP_PATH = "drivers/virtual_fastrpc/dsp"
+RSM_FE_PATH = "drivers/rsm_fe"
 platform_modules = {}
 platform_modules_by_config = {}
 
@@ -130,6 +131,17 @@ register_platform_kernel_module(
     default_srcs = [
         "virtio_ssr.c",
 	"qcom_common.h",
+    ],
+)
+
+register_platform_kernel_module(
+    name = "rsm_fe",
+    path = RSM_FE_PATH,
+    default_srcs = [
+        "virtio_rsm_base.c",
+        "virtio_rsm_base.h",
+        "virtio_rsm_client.c",
+        "virtio_rsm_client.h"
     ],
 )
 
