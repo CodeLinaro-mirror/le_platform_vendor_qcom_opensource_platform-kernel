@@ -10,6 +10,7 @@ def define_autogvm():
 	    "vm-cpufreq",
 	    "subsystem_notif_virt",
 	    "virtio_ssr",
+	    "rsm_fe",
 	    "vfastrpc",
 	    "hfastrpc"
 	],

@@ -2,7 +2,8 @@ VIRTIO_RSMFE_SELECT := CONFIG_VIRTIO_RSMFE=m
 
 DLKM_DIR := $(TOP)/device/qcom/common/dlkm
 LOCAL_PATH := $(call my-dir)
-
+LOCAL_MODULE_DDK_BUILD := true
+LOCAL_MODULE_DDK_ALLOW_UNSAFE_HEADERS := true
 RSMFE_BLD_DIR := $(abspath .)/vendor/qcom/opensource/platform-kernel/drivers/rsm_fe
 
 KBUILD_OPTIONS += RSMFE_ROOT=$(RSMFE_BLD_DIR)
