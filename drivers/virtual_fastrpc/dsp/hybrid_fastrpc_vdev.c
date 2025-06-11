@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -14,6 +14,7 @@
 #include <linux/uaccess.h>
 #include <linux/of.h>
 #include <linux/remoteproc/qcom_rproc.h>
+#include <linux/version.h>
 #include "virtio_fastrpc_mem.h"
 #include "virtio_fastrpc_queue.h"
 #define CREATE_TRACE_POINTS
@@ -184,7 +185,7 @@ static ssize_t hfastrpc_debugfs_read(struct file *filp, char __user *buffer,
 			"\n========%s %s %s========\n", title,
 			" SESSION INFO ", title);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
-				"\n%s %d %s %d %s 0x%lx\n", "tgid_frpc =",
+				"\n%s %d %s %d %s 0x%x\n", "tgid_frpc =",
 				fl->tgid_frpc, "sessionid =", fl->sessionid,
 				"upid =", vfl->upid);
 		len += scnprintf(fileinfo + len, DEBUGFS_SIZE - len,
@@ -671,14 +672,42 @@ static void virt_init_vq(struct virt_fastrpc_vq *fastrpc_vq,
 	fastrpc_vq->vq = vq;
 }
 
+static void hfastrpc_unused_tx_bufs_list_free(struct vfastrpc_apps *me)
+{
+	struct vfastrpc_vqbuf *vtxbuf, *free;
+	struct hlist_node *n;
+
+	if (hlist_empty(&me->unused_tx_bufs))
+		return;
+	do {
+		free = NULL;
+		hlist_for_each_entry_safe(vtxbuf, n, &me->unused_tx_bufs, hn) {
+			free = vtxbuf;
+			hlist_del_init(&vtxbuf->hn);
+			break;
+		}
+		if (free)
+			kfree(free);
+	} while(free);
+}
+
 static int init_vqs(struct vfastrpc_apps *me)
 {
 	struct virtqueue *vqs[2];
+	int err, i;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	struct virtqueue_info vqs_info[] = {
+		{"tx", NULL },
+		{"rx", fastrpc_vq_callback },
+	};
+
+	err = virtio_find_vqs(me->vdev, 2, vqs, vqs_info, NULL);
+#else
 	static const char * const names[] = { "tx", "rx" };
 	vq_callback_t *cbs[] = { NULL, fastrpc_vq_callback };
-	int err, i;
 
 	err = virtio_find_vqs(me->vdev, 2, vqs, cbs, names, NULL);
+#endif
 	if (err)
 		return err;
 
@@ -724,8 +753,17 @@ static int init_vqs(struct vfastrpc_apps *me)
 			goto sbuf_del;
 		}
 	}
-	return 0;
 
+	INIT_HLIST_HEAD(&me->unused_tx_bufs);
+	for (i = 0; i < me->num_bufs; i++) {
+		err = put_a_tx_buf(me, me->sbufs[i]);
+		if (err) {
+			goto list_del;
+		}
+	}
+	return 0;
+list_del:
+	hfastrpc_unused_tx_bufs_list_free(me);
 sbuf_del:
 	for (i = 0; i < me->num_bufs; i++) {
 		if (me->sbufs[i])
@@ -846,7 +884,7 @@ static int hfastrpc_init(void)
 		chan[i].handle = qcom_register_ssr_notifier(
 				gcinfo[i].subsys, &chan[i].nb);
 		if (IS_ERR_OR_NULL(chan[i].handle))
-			ADSPRPC_WARN("SSR notifier register failed for %s with err %d\n",
+			ADSPRPC_WARN("SSR notifier register failed for %s with err %ld\n",
 				gcinfo[i].subsys, PTR_ERR(chan[i].handle));
 		else
 			ADSPRPC_INFO("SSR notifier registered for %s\n",
@@ -989,8 +1027,11 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 	err = cdev_add(&me->cdev, MKDEV(MAJOR(me->dev_no), 0), NUM_DEVICES);
 	if (err)
 		goto cdev_init_bail;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	me->class = class_create("fastrpc");
+#else
 	me->class = class_create(THIS_MODULE, "fastrpc");
+#endif
 	if (IS_ERR(me->class))
 		goto class_create_bail;
 
@@ -1079,6 +1120,7 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
 
+	hfastrpc_unused_tx_bufs_list_free(me);
 	for (i = 0; i < me->num_bufs; i++)
 		free_pages((unsigned long)me->rbufs[i], me->order);
 	for (i = 0; i < me->num_bufs; i++)

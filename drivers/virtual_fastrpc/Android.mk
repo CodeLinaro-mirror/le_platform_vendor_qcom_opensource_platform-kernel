@@ -3,7 +3,8 @@ HYBRID_FASTRPC_SELECT := CONFIG_HYBRID_FASTRPC=m
 
 DLKM_DIR := $(TOP)/device/qcom/common/dlkm
 LOCAL_PATH := $(call my-dir)
-
+LOCAL_MODULE_DDK_BUILD := true
+LOCAL_MODULE_DDK_ALLOW_UNSAFE_HEADERS := true
 VRPC_BLD_DIR := $(abspath .)/vendor/qcom/opensource/platform-kernel/drivers/virtual_fastrpc
 
 KBUILD_OPTIONS += VRPC_ROOT=$(VRPC_BLD_DIR)

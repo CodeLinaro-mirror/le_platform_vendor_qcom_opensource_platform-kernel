@@ -78,9 +78,21 @@ void qcom_add_ssr_subdev(struct rproc *rproc, struct qcom_rproc_ssr *ssr,
 void qcom_notify_early_ssr_clients(struct rproc_subdev *subdev);
 void qcom_remove_ssr_subdev(struct rproc *rproc, struct qcom_rproc_ssr *ssr);
 void qcom_rproc_update_recovery_status(struct rproc *rproc, bool enable);
+#if IS_ENABLED(CONFIG_QCOM_RPROC_COMMON)
 struct qcom_ssr_subsystem *qcom_ssr_get_subsys(const char *name);
 int qcom_notify_ssr_clients(struct qcom_ssr_subsystem *info, int state,
 							struct qcom_ssr_notify_data *data);
+#else
+static inline struct qcom_ssr_subsystem *qcom_ssr_get_subsys(const char *name)
+{
+	return NULL;
+}
+static int qcom_notify_ssr_clients(struct qcom_ssr_subsystem *info, int state,
+					struct qcom_ssr_notify_data *data)
+{
+	return -ENODEV;
+}
+#endif
 
 #if IS_ENABLED(CONFIG_QCOM_SYSMON)
 struct qcom_sysmon *qcom_add_sysmon_subdev(struct rproc *rproc,

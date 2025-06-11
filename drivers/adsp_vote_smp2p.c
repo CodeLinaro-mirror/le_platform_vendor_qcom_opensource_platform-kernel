@@ -32,7 +32,7 @@ static int adsp_manual_vote_op(void *data, u64 vote)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(fops_vote, NULL, adsp_manual_vote_op, "%ull\n");
+DEFINE_SIMPLE_ATTRIBUTE(fops_vote, NULL, adsp_manual_vote_op, "%llu\n");
 
 static int adsp_vote_smp2p_probe(struct platform_device *pdev)
 {

@@ -64,9 +64,9 @@ ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/hfastrpc.ko
 endif
 
+    BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/rsm_fe.ko
 endif
 endif
-
 # Drivers for Talos only
 ifneq (,$(call is-board-platform-in-list2,sm6150))
 ifeq (,$(filter $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX), sm6150_gvmq))

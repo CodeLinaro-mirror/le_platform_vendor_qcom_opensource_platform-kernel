@@ -3,7 +3,8 @@
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
-
+#include <linux/version.h>
+#include <linux/vmalloc.h>
 #include "virtio_fastrpc_mem.h"
 #include "virtio_fastrpc_queue.h"
 
@@ -11,19 +12,19 @@ struct fastrpc_smmu_map {
 	u32 attrs;
 	u32 nents;
 	u64 da;
-	struct virt_fastrpc_sgl sgl[0];
+	struct virt_fastrpc_sgl sgl[];
 } __packed;
 
 struct virt_smmu_map_msg {
 	struct virt_msg_hdr hdr;		/* virtio fastrpc message header */
 	u32 nents;				/* number of map entries */
-	struct fastrpc_smmu_map smmu_map[0];	/* smmu map list */
+	struct fastrpc_smmu_map smmu_map[];	/* smmu map list */
 } __packed;
 
 struct virt_smmu_unmap_msg {
 	struct virt_msg_hdr hdr;		/* virtio fastrpc message header */
 	u32 nents;				/* number of unmap entries */
-	u64 da[0];				/* smmu unmap da list */
+	u64 da[];				/* smmu unmap da list */
 } __packed;
 
 #define MAX_CACHE_BUF_SIZE		(8*1024*1024)
@@ -41,7 +42,11 @@ static inline void vfastrpc_free_pages(struct page **pages, unsigned int count)
 static struct page **vfastrpc_alloc_pages(struct device *dev, unsigned int count, gfp_t gfp)
 {
 	struct page **pages;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
+	unsigned long order_mask = (2U << NR_PAGE_ORDERS) - 1;
+#else
 	unsigned long order_mask = (2U << MAX_ORDER) - 1;
+#endif
 	unsigned int i = 0, nid = dev_to_node(dev);
 
 	pages = kvzalloc(count * sizeof(*pages), GFP_KERNEL);
@@ -172,7 +177,7 @@ int vfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 
 	VERIFY(err, size > 0 && size < MAX_BUF_SIZE);
 	if (err) {
-		dev_err(me->dev, "%s: Invalid buffer size, 0x%llx\n",
+		dev_err(me->dev, "%s: Invalid buffer size, 0x%zx\n",
 				__func__, size);
 		goto bail;
 	}
@@ -502,7 +507,7 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 		intbuf.pages = vfastrpc_alloc_buffer(me->dev, &intbuf,
 				GFP_KERNEL, PAGE_KERNEL);
 		if (!intbuf.pages) {
-			dev_err(me->dev, "%s: fail to alloc buffer size %llx\n",
+			dev_err(me->dev, "%s: fail to alloc buffer size %zx\n",
 					__func__, intbuf.size);
 			return -ENOMEM;
 		}
@@ -575,7 +580,8 @@ static int virt_smmu_map(struct vfastrpc_file *vfl, u32 attr,
 	if (err)
 		goto bail;
 	if (!rsp->smmu_map[0].da) {
-		dev_err(me->dev, "invalid smmu da %u\n", rsp->smmu_map[0].da);
+		dev_err(me->dev, "invalid smmu da %llu\n",
+				rsp->smmu_map[0].da);
 		err = -EFAULT;
 		goto bail;
 	}
@@ -944,7 +950,7 @@ int hfastrpc_buf_alloc(struct vfastrpc_file *vfl, size_t size,
 
 	VERIFY(err, size > 0 && size < MAX_BUF_SIZE);
 	if (err) {
-		ADSPRPC_ERR("Invalid buffer size, 0x%llx\n", size);
+		ADSPRPC_ERR("Invalid buffer size, 0x%zx\n", size);
 		goto bail;
 	}
 

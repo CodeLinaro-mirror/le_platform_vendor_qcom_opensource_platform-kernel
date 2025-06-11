@@ -251,7 +251,7 @@ static void context_free(struct vfastrpc_invoke_ctx *ctx)
 		ctx->desc = NULL;
 	}
 
-	if (fl->profile)
+	if (fl->profile && ctx->perf)
 		kfree(ctx->perf);
 
 	kfree(ctx);
@@ -513,7 +513,6 @@ static int context_alloc(struct vfastrpc_file *vfl, uint32_t msg_type, s64 seq_n
 		ctx->perf = kzalloc(sizeof(*(ctx->perf)), GFP_KERNEL);
 		VERIFY(err, !IS_ERR_OR_NULL(ctx->perf));
 		if (err) {
-			kfree(ctx->perf);
 			err = -ENOMEM;
 			goto bail;
 		}
@@ -756,8 +755,8 @@ static int get_args(struct vfastrpc_invoke_ctx *ctx)
 			VERIFY(err, offset + len <= (uintptr_t)maps[i]->size);
 			if (err) {
 				dev_err(me->dev,
-						"buffer address is invalid for the fd passed for %d address 0x%llx and size %zu\n",
-						i, (uintptr_t)lpra[i].buf.pv, lpra[i].buf.len);
+						"buffer address is invalid for the fd passed for %d address %p and size %zu\n",
+						i, lpra[i].buf.pv, lpra[i].buf.len);
 				err = -EFAULT;
 				goto save_req_tx_buf;
 			}
@@ -1137,6 +1136,8 @@ bail:
 					ctx->perf, M_KERNEL_PERF_LIST*sizeof(uint64_t));
 		lseq_num = ctx->seq_num;
 		context_free(ctx);
+		if (fl->profile)
+			perf_counter = NULL;
 		trace_fastrpc_internal_invoke_end(invoke->handle, invoke->sc, lseq_num);
 	}
 
@@ -1881,7 +1882,7 @@ static int vfastrpc_internal_mem_unmap(struct vfastrpc_file *vfl,
 	map = NULL;
 bail:
 	if (err) {
-		dev_err(me->dev, "%s failed to unmap fd %d addr 0x%llx length 0x%x err 0x%x\n",
+		dev_err(me->dev, "%s failed to unmap fd %d addr 0x%llx length 0x%zx err 0x%x\n",
 			__func__, ud->um.fd, ud->um.vaddr, ud->um.length, err);
 		/* Add back to map list in case of error to unmap on DSP */
 		if (map) {
