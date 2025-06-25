@@ -8,6 +8,7 @@ def define_autogvm():
 	    "boot_marker",
 	    "socinfo_dt",
 	    "vm-cpufreq",
+	    "virtio_ssr",
 	    "subsystem_notif_virt",
 	    "hfastrpc"
 	],
