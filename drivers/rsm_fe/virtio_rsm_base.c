@@ -6,6 +6,21 @@
 #include "virtio_rsm_base.h"
 struct virtio_rsm_dev* g_vdevrsm = NULL;
 
+static void * txbuf_get(void)
+{
+	unsigned int len = 0;
+	void *ret = NULL;
+	/*
+	 * either pick the next unused tx buffer
+	 */
+	if (g_vdevrsm->txBufUsedCount < g_vdevrsm->num_buf)
+		ret = g_vdevrsm->txbufs[g_vdevrsm->txBufUsedCount++];
+	/* or recycle a used one */
+	else
+		ret = virtqueue_get_buf(g_vdevrsm->vq_tx, &len);
+	return ret;
+}
+
 /**************send the tx buffer to PVM via tx virtqueue************/
 int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf)
 {
@@ -14,22 +29,39 @@ int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf)
     int err = NO_ERROR;
     /*for multiple request get a tx_buf from vring */
     spin_lock_irqsave(&g_vdevrsm->vqtx_lock, flags);
-    struct virtio_rsm_txbuf *cpu_addr = g_vdevrsm->txbufs[send_buf->msg_id];
-
+    struct virtio_rsm_txbuf *cpu_addr = txbuf_get();
     memcpy(cpu_addr,send_buf,sizeof(struct virtio_rsm_txbuf));
 
     sg_init_one(sg, cpu_addr, sizeof(struct virtio_rsm_txbuf));
     err = virtqueue_add_outbuf(g_vdevrsm->vq_tx, sg, 1, cpu_addr, GFP_KERNEL);
     if (err) {
-		LOG_RSMFE(LEVEL_ERR, " rsm txbuf send failed \n");
-		spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
+        LOG_RSMFE(LEVEL_ERR, " rsm txbuf send failed \n");
+        spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
         return err;
-	}
-	virtqueue_kick(g_vdevrsm->vq_tx);
+    }
+    virtqueue_kick(g_vdevrsm->vq_tx);
 
     spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
     LOG_RSMFE(LEVEL_INFO, " rsm txbuf sent for msgid - %d! \n",send_buf->msg_id);
     return err;
+}
+
+/* add the buffer back to the remote processor's virtqueue */
+static void rxbuf_emplace(struct virtio_rsm_rxbuf *rxBuf)
+{
+	struct scatterlist sg[1];
+	int err = 0;
+
+	sg_init_one(sg, rxBuf, sizeof(struct virtio_rsm_rxbuf));
+
+	err = virtqueue_add_inbuf(g_vdevrsm->vq_rx, sg, 1, rxBuf, GFP_KERNEL);
+	if (err) {
+		LOG_RSMFE(LEVEL_ERR, " rsm RxBuf emplace failed: %d\n", err);
+	}
+    else
+    {
+	    virtqueue_kick(g_vdevrsm->vq_rx);
+    }
 }
 
 /**************receive callback on rx buffer from PVM via rx virtqueue************/
@@ -52,14 +84,15 @@ static void virtio_rsm_recv_cb(struct virtqueue *vq_rx)
     {
         /* Invalid client handle received */
         LOG_RSMFE(LEVEL_ERR, " rsm callback received but client handle %d not valid. \n", buf->msg_id);
+        rxbuf_emplace(buf);
         spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
         return;
     }
 
     memcpy(&g_vdevrsm->client_list[buf->msg_id].rxbuf,buf,sizeof(struct virtio_rsm_rxbuf));
     complete(&g_vdevrsm->client_list[buf->msg_id].work);
-
     dev_info(&vq_rx->vdev->dev, "rsm callback received rxbuf for msgid %d!!\n",buf->msg_id);   
+    rxbuf_emplace(buf);
     spin_unlock_irqrestore(&g_vdevrsm->vqrx_lock, flags);
 }
 
@@ -128,6 +161,9 @@ static int init_vqs(struct virtio_rsm_dev *vdev_rsm)
 			return err;
 		}
 	}
+
+    //Initialise used TX Buf count to 0
+    vdev_rsm->txBufUsedCount = 0;
     spin_lock_init(&vdev_rsm->vqtx_lock);
 	spin_lock_init(&vdev_rsm->vqrx_lock);
 

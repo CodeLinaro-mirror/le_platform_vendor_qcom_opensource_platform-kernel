@@ -114,7 +114,8 @@ struct virtio_rsm_dev {
         int num_buf;
         unsigned int order;
         struct rsm_client_table client_list[MAX_CLIENT]; 
-        spinlock_t vq_clientlock;     
+        spinlock_t vq_clientlock;
+        int txBufUsedCount;
 };
 
 int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf);

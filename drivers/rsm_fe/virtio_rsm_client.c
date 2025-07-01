@@ -112,6 +112,7 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
     err = virt_rsm_txbuf(txbuf);
     if(err != NO_ERROR)
     {
+        LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. TX Failed: %d \n", err);
         /* Send was unsuccessful so release the client index */
         delete_client_table_entry(upid,tid);
         kfree(txbuf);
@@ -124,8 +125,8 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
 
     if((*handle == 0) || (g_vdevrsm->client_list[idx].rxbuf.return_val.err != 0))
     {
-        delete_client_table_entry(upid,tid);
         LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful err = %d \n",g_vdevrsm->client_list[idx].rxbuf.return_val.err);
+        delete_client_table_entry(upid,tid);
     }
     else
     {
@@ -174,6 +175,7 @@ int rsm_acquire(rsm_handle handle, char* job_name, rsm_acquire_rsp_v2 *response)
     err = virt_rsm_txbuf(txbuf);
     if(err != NO_ERROR)
     {
+        LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. TX Failed: %d \n", err);
         kfree(txbuf);
         return err;
     }
@@ -231,6 +233,7 @@ int rsm_release_v2(rsm_handle handle, rsm_token token)
     err = virt_rsm_txbuf(txbuf);
     if(err != NO_ERROR)
     {
+        LOG_RSMFE(LEVEL_ERR, " rsm_release unsuccessful. TX Failed: %d \n", err);
         kfree(txbuf);
         return err;
     }
@@ -288,6 +291,7 @@ int rsm_unregister_v2(rsm_handle handle)
     err = virt_rsm_txbuf(txbuf);
     if(err != NO_ERROR)
     {
+        LOG_RSMFE(LEVEL_ERR, " rsm_unregister unsuccessful. TX Failed: %d \n", err);
         kfree(txbuf);
         return err;
     }
@@ -311,5 +315,5 @@ int rsm_unregister_batch(unsigned int upid)
 {
     /********to be implemented********/
     LOG_RSMFE(LEVEL_ERR, " rsm_unregister_batch unsuccessful. Not implemented \n");
-    return 0;
+    return EINVAL;
 }
