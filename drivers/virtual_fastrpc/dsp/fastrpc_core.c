@@ -946,6 +946,7 @@ void print_ictx_info(struct seq_file *s_file, struct fastrpc_invoke_ctx *ictx)
 	seq_printf(s_file, "\n %s %10s %llu", "ctxid", ":", ictx->ctxid);
 	seq_printf(s_file, "\n %s %3s %d", "is_work_done", ":", ictx->is_work_done);
 	seq_printf(s_file, "\n %s %9s %llu", "msg_sz", ":", ictx->msg_sz);
+	seq_printf(s_file, "\n %s %9s 0x%x", "handle", ":", ictx->handle);
 }
 
 void print_ctx_info(struct seq_file *s_file, struct fastrpc_channel_ctx *ctx)
