@@ -14,10 +14,14 @@ static void * txbuf_get(void)
 	 * either pick the next unused tx buffer
 	 */
 	if (g_vdevrsm->txBufUsedCount < g_vdevrsm->num_buf)
+    {
 		ret = g_vdevrsm->txbufs[g_vdevrsm->txBufUsedCount++];
+    }
 	/* or recycle a used one */
 	else
+    {
 		ret = virtqueue_get_buf(g_vdevrsm->vq_tx, &len);
+    }
 	return ret;
 }
 
@@ -35,8 +39,8 @@ int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf)
     sg_init_one(sg, cpu_addr, sizeof(struct virtio_rsm_txbuf));
     err = virtqueue_add_outbuf(g_vdevrsm->vq_tx, sg, 1, cpu_addr, GFP_KERNEL);
     if (err) {
-        LOG_RSMFE(LEVEL_ERR, " rsm txbuf send failed \n");
         spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
+        LOG_RSMFE(LEVEL_ERR, " rsm txbuf send failed \n");
         return err;
     }
     virtqueue_kick(g_vdevrsm->vq_tx);
@@ -55,7 +59,8 @@ static void rxbuf_emplace(struct virtio_rsm_rxbuf *rxBuf)
 	sg_init_one(sg, rxBuf, sizeof(struct virtio_rsm_rxbuf));
 
 	err = virtqueue_add_inbuf(g_vdevrsm->vq_rx, sg, 1, rxBuf, GFP_KERNEL);
-	if (err) {
+	if (err)
+    {
 		LOG_RSMFE(LEVEL_ERR, " rsm RxBuf emplace failed: %d\n", err);
 	}
     else
@@ -72,33 +77,37 @@ static void virtio_rsm_recv_cb(struct virtqueue *vq_rx)
     unsigned long flags;
     unsigned int len;
 
+    LOG_RSMFE(LEVEL_INFO, "RSM virtq rx notification received\n");
     spin_lock_irqsave(&g_vdevrsm->vqrx_lock, flags);
-    buf = virtqueue_get_buf(dev->vq_rx, &len);
-    if (buf == NULL) {
-        LOG_RSMFE(LEVEL_ERR, "rsm callback received but no buffer \n");
-        spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
-        return;
-    }
-
-    if(buf->msg_id >= MAX_CLIENT || buf->msg_id < 0)
+    /* Receive all the messages */
+    for(;;)
     {
-        /* Invalid client handle received */
-        LOG_RSMFE(LEVEL_ERR, " rsm callback received but client handle %d not valid. \n", buf->msg_id);
-        rxbuf_emplace(buf);
-        spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
-        return;
-    }
+        buf = virtqueue_get_buf(dev->vq_rx, &len);
+        if (NULL == buf) {
+            LOG_RSMFE(LEVEL_DEBUG, "RSM Rx: no more buffers \n");
+            spin_unlock_irqrestore(&g_vdevrsm->vqrx_lock, flags);
+            break;
+        }
 
-    memcpy(&g_vdevrsm->client_list[buf->msg_id].rxbuf,buf,sizeof(struct virtio_rsm_rxbuf));
-    complete(&g_vdevrsm->client_list[buf->msg_id].work);
-    dev_info(&vq_rx->vdev->dev, "rsm callback received rxbuf for msgid %d!!\n",buf->msg_id);   
-    rxbuf_emplace(buf);
-    spin_unlock_irqrestore(&g_vdevrsm->vqrx_lock, flags);
+        if(buf->msg_id >= MAX_CLIENT || buf->msg_id < 0)
+        {
+            /* Invalid client handle received */
+            LOG_RSMFE(LEVEL_ERR, "RSM Rx: client id %d not valid. \n", buf->msg_id);
+            rxbuf_emplace(buf);
+            continue;
+        }
+
+        memcpy(&g_vdevrsm->client_list[buf->msg_id].rxbuf,buf,sizeof(struct virtio_rsm_rxbuf));
+        dev_info(&vq_rx->vdev->dev, "RSM Rx: Received rxbuf for msgid %d!!\n",buf->msg_id);   
+        /* Unblock the client that is waiting */
+        complete(&g_vdevrsm->client_list[buf->msg_id].work);
+        rxbuf_emplace(buf);
+    }
 }
 
 static int init_vqs(struct virtio_rsm_dev *vdev_rsm)
 {
-    int i, err = 0;
+    int i, tearIter, err = 0;
 	struct virtqueue *vqs[2];
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 10, 0)
     struct virtqueue_info vqs_info[] = {
@@ -124,52 +133,72 @@ static int init_vqs(struct virtio_rsm_dev *vdev_rsm)
     vdev_rsm->num_buf = virtqueue_get_vring_size(vdev_rsm->vq_rx);
     dev_info(vdev_rsm->dev, "size of vring %d!!!\n",vdev_rsm->num_buf);
     vdev_rsm->rxbufs = kcalloc(vdev_rsm->num_buf, sizeof(void *), GFP_KERNEL);
-	if (NULL == vdev_rsm->rxbufs) {
-		err = -ENOMEM;
-        LOG_RSMFE(LEVEL_ERR, "Unable to rxbuf \n");
-		return err;
+	if (NULL == vdev_rsm->rxbufs)
+    {
+        err = -ENOMEM;
+        LOG_RSMFE(LEVEL_ERR, "Unable to alloc rxbuf \n");
+        return err;
 	}
     vdev_rsm->txbufs = kcalloc(vdev_rsm->num_buf, sizeof(void *), GFP_KERNEL);
-	if (NULL == vdev_rsm->txbufs) {
-		err = -ENOMEM;
-        LOG_RSMFE(LEVEL_ERR, "Unable to txbuf \n");
+	if (NULL == vdev_rsm->txbufs)
+    {
+        err = -ENOMEM;
+        LOG_RSMFE(LEVEL_ERR, "Unable to alloc txbuf \n");
         kfree(vdev_rsm->rxbufs);
-		return err;
+        vdev_rsm->rxbufs = NULL;
+        return err;
 	}
 
     vdev_rsm->order = get_order(DEF_BUFF_SIZE);
 	for (i = 0; i < vdev_rsm->num_buf; i++) {
 		vdev_rsm->rxbufs[i] = (void *)__get_free_pages(GFP_KERNEL, vdev_rsm->order);
-		if (!vdev_rsm->rxbufs[i]) {
-			err = -ENOMEM;
+		if (!vdev_rsm->rxbufs[i])
+        {
+            err = -ENOMEM;
             LOG_RSMFE(LEVEL_ERR, "Unable to get free pages for rxbuf \n");
-            /* Todo: Release the free pages as well? */
+            for(tearIter=0; tearIter < i; tearIter++)
+            {
+                free_pages((unsigned long)vdev_rsm->rxbufs[tearIter], vdev_rsm->order);
+            }
             kfree(vdev_rsm->rxbufs);
             kfree(vdev_rsm->txbufs);
-			return err;
+            vdev_rsm->rxbufs = NULL;
+            vdev_rsm->txbufs = NULL;
+            return err;
 		}
 	}
 
-	for (i = 0; i < vdev_rsm->num_buf; i++) {
-		vdev_rsm->txbufs[i] = (void *)__get_free_pages(GFP_KERNEL, vdev_rsm->order);
-		if (!vdev_rsm->txbufs[i]) {
+	for (i = 0; i < vdev_rsm->num_buf; i++)
+    {
+        vdev_rsm->txbufs[i] = (void *)__get_free_pages(GFP_KERNEL, vdev_rsm->order);
+        if (!vdev_rsm->txbufs[i]) {
             LOG_RSMFE(LEVEL_ERR, "Unable to get free pages for txbuf \n");
-            /* Todo: Release the free pages as well? */
+            for(tearIter=0; tearIter < i; tearIter++)
+            {
+                free_pages((unsigned long)vdev_rsm->txbufs[tearIter], vdev_rsm->order);
+            }
+            for(tearIter=0; tearIter < vdev_rsm->num_buf; tearIter++)
+            {
+                free_pages((unsigned long)vdev_rsm->rxbufs[tearIter], vdev_rsm->order);
+            }
             kfree(vdev_rsm->rxbufs);
             kfree(vdev_rsm->txbufs);
-			err = -ENOMEM;
-			return err;
-		}
-	}
+            vdev_rsm->rxbufs = NULL;
+            vdev_rsm->txbufs = NULL;
+            err = -ENOMEM;
+            return err;
+        }
+    }
 
     //Initialise used TX Buf count to 0
     vdev_rsm->txBufUsedCount = 0;
     spin_lock_init(&vdev_rsm->vqtx_lock);
-	spin_lock_init(&vdev_rsm->vqrx_lock);
+    spin_lock_init(&vdev_rsm->vqrx_lock);
 
     dev_info(vdev_rsm->dev, "vring calloc successful \n");
     return err;
 }
+
 static void init_client_table(void)
 {
     memset(g_vdevrsm->client_list, 0, sizeof(g_vdevrsm->client_list));
@@ -231,7 +260,7 @@ static int virtio_rsm_probe(struct virtio_device *vdev)
 #endif
     /*************************************************/
     //virt_rsm_init_txbuf(vdev_rsm);  such function can be used to do handshake before the comm starts
-    dev_info(&vdev->dev, "rsm virtio driver probe successful!!!\n");
+    dev_info(&vdev->dev, "RSM Virtio driver probe successful \n");
     return 0;
 }
 
