@@ -22,4 +22,5 @@ int fastrpc_req_mmap(struct fastrpc_user *fl, char __user *argp);
 int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp);
 int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp);
 int fastrpc_req_mem_unmap(struct fastrpc_user *fl, char __user *argp);
+void fastrpc_queue_pd_status(struct fastrpc_user *fl, int domain, int status, int sessionid);
 #endif /*__FASTRPC_CORE_H__*/

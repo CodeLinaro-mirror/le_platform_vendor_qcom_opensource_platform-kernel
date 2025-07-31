@@ -122,6 +122,7 @@ void fastrpc_update_gdriver(struct fastrpc_channel_ctx *cctx, int flag)
 		cctx->dev = cctx->gdriver->dev;
 	} else {
 		cctx->gdriver = NULL;
+		cctx->dev = NULL;
 	}
 }
 

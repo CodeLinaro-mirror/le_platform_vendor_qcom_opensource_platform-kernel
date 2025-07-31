@@ -251,23 +251,20 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
 	domain->status = DSP_STATUS_DOWN;
 	domain->cctx = NULL;
 	list_for_each_entry(user, &cctx->users, user) {
+		fastrpc_queue_pd_status(user, cctx->domain_id, FASTRPC_DSP_SSR,
+			user->sessionid);
 		fastrpc_notify_users(user);
 	}
 	spin_unlock_irqrestore(&cctx->lock, flags);
 	fastrpc_remove_device_nodes(cctx);
 
-	list_for_each_entry(user, &cctx->users, user) {
-		fastrpc_free_user(user);
-	}
 	RPC_INFO("closing rpmsg channel for %s", cctx->domain->name);
-	cctx->dev = NULL;
 	cctx->rpdev = NULL;
 	cctx->domain = NULL;
 
 	if (!is_device_discovery_supported())
 		kfree(domain);
 
-	fastrpc_update_gdriver(cctx, 0);
 	fastrpc_channel_ctx_put(cctx);
 }
 

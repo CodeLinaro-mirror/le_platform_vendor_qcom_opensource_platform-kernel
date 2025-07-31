@@ -335,6 +335,7 @@ static void fastrpc_channel_ctx_free(struct kref *ref)
 	cctx = container_of(ref, struct fastrpc_channel_ctx, refcount);
 
 	ida_destroy(&cctx->tgid_frpc_ida);
+	fastrpc_update_gdriver(cctx, 0);
 	kfree(cctx);
 }
 
