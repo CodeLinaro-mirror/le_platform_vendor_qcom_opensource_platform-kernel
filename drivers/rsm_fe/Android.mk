@@ -1,3 +1,5 @@
+################# START Virtio RSM Check #################
+ifeq ($(TARGET_HAS_VIRTIO_RSM), true)
 VIRTIO_RSMFE_SELECT := CONFIG_VIRTIO_RSMFE=m
 
 DLKM_DIR := $(TOP)/device/qcom/common/dlkm
@@ -11,7 +13,7 @@ KBUILD_OPTIONS += $(VIRTIO_RSMFE_SELECT)
 KBUILD_OPTIONS += BOARD_PLATFORM=$(TARGET_BOARD_PLATFORM)
 
 # virtio RSM
-###########################################################
+##########################################################
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES   := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
 LOCAL_MODULE      := rsm_fe.ko
@@ -19,7 +21,7 @@ LOCAL_MODULE_KBUILD_NAME := rsm_fe.ko
 LOCAL_MODULE_PATH := $(KERNEL_MODULES_OUT)
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
-########################### Module.symvers ############################
+##################### Module.symvers #####################
 include $(CLEAR_VARS)
 LOCAL_SRC_FILES           := $(wildcard $(LOCAL_PATH)/**/*) $(wildcard $(LOCAL_PATH)/*)
 LOCAL_MODULE              := rsm-fe-module-symvers
@@ -27,3 +29,5 @@ LOCAL_MODULE_STEM         := Module.symvers
 LOCAL_MODULE_KBUILD_NAME  := Module.symvers
 LOCAL_MODULE_PATH         := $(KERNEL_MODULES_OUT)
 include $(DLKM_DIR)/Build_external_kernelmodule.mk
+endif
+################## END Virtio RSM Check ##################
