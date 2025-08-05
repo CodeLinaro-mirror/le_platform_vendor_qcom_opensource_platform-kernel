@@ -238,7 +238,7 @@ endif
 
 # Drivers for LA-GVM only
 ###########################################################
-ifneq (,$(filter msmnile_gvmq gen4_gvm gen4_gvm_gy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
+ifneq (,$(filter msmnile_gvmq gen4_gvm gen4_gvm_gy gen4_gvm_gy_sgt, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
 KBUILD_OPTIONS += MODNAME=qcom-dt-socinfo
 KBUILD_OPTIONS += $(SOCINFO_DT_SELECT)
 
