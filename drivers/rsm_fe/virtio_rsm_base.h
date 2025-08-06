@@ -12,8 +12,8 @@
 #include <linux/string.h>
 #include "virtio_rsm_client.h"
 /* Virtio ID of RSM : 0xC00E */
-#define VIRTIO_ID_RSM				49166
-//#define TEST_MODE                   1
+#define VIRTIO_ID_RSM   0xC00E
+//#define TEST_MODE     1
 
 extern struct virtio_rsm_dev* g_vdevrsm;
 
@@ -26,13 +26,13 @@ static unsigned int log_level = LEVEL_INFO;
 static char *prix[] = {"", "debug", "info", "error"};
 static void log_rsmfe(int level, const char *fmt, ...)
 {
-	va_list args;
+    va_list args;
 
-	if ((level) >= log_level) {
-		va_start(args, fmt);
-		vprintk(fmt, args);
-		va_end(args);
-	}
+    if ((level) >= log_level) {
+        va_start(args, fmt);
+        vprintk(fmt, args);
+        va_end(args);
+    }
 }
 #define LOG_RSMFE(level, format, args...) \
 log_rsmfe(level, "rsmfe: pid %.8x: %s: %s(%d) "format, \
@@ -76,22 +76,22 @@ typedef struct {
 }rsm_rx;
 
 union rsm_txcmd_data{
-        rsm_register_tx register_data;
-        rsm_acquire_tx acquire_data;
-        rsm_release_tx release_data;
-        rsm_unregister_tx unregister_data;
+    rsm_register_tx register_data;
+    rsm_acquire_tx acquire_data;
+    rsm_release_tx release_data;
+    rsm_unregister_tx unregister_data;
 };
 
 struct virtio_rsm_txbuf {
     unsigned int msg_id;
-	enum rsm_cmd cmd;
+    enum rsm_cmd cmd;
     union rsm_txcmd_data send_data;
 };
 struct virtio_rsm_rxbuf {
     unsigned int msg_id;
-	enum rsm_cmd cmd;
+    enum rsm_cmd cmd;
     rsm_acquire_rsp_v2 acq_rsp;
-	rsm_rx return_val;
+    rsm_rx return_val;
 };
 
 struct rsm_client_table {
@@ -103,19 +103,19 @@ struct rsm_client_table {
 };
 /* device private data (one per device) */
 struct virtio_rsm_dev {
-        struct virtio_device *vdev;
-        struct device *dev;
-        struct virtqueue *vq_tx;
-        spinlock_t vqtx_lock;
-        struct virtqueue *vq_rx;
-        spinlock_t vqrx_lock;
-        void **txbufs;
-	    void **rxbufs;
-        int num_buf;
-        unsigned int order;
-        struct rsm_client_table client_list[MAX_CLIENT]; 
-        spinlock_t vq_clientlock;
-        int txBufUsedCount;
+    struct virtio_device *vdev;
+    struct device *dev;
+    struct virtqueue *vq_tx;
+    spinlock_t vqtx_lock;
+    struct virtqueue *vq_rx;
+    spinlock_t vqrx_lock;
+    void **txbufs;
+    void **rxbufs;
+    int num_buf;
+    unsigned int order;
+    struct rsm_client_table client_list[MAX_CLIENT]; 
+    spinlock_t vq_clientlock;
+    int txBufUsedCount;
 };
 
 int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf);
