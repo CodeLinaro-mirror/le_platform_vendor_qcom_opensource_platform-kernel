@@ -64,7 +64,10 @@ ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/hfastrpc.ko
 endif
 
+ifeq ($(TARGET_HAS_VIRTIO_RSM), true)
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/rsm_fe.ko
+endif
+
 endif
 endif
 # Drivers for Talos only
