@@ -4,6 +4,7 @@
 */
 #include <linux/version.h>
 #include "virtio_rsm_base.h"
+#define VIRTIO_RSM_F_NSP_SHARING    7 /* Bit as defined in virtio vdev */
 struct virtio_rsm_dev* g_vdevrsm = NULL;
 
 static void * txbuf_get(void)
@@ -34,6 +35,12 @@ int virt_rsm_txbuf(struct virtio_rsm_txbuf *send_buf)
     /*for multiple request get a tx_buf from vring */
     spin_lock_irqsave(&g_vdevrsm->vqtx_lock, flags);
     struct virtio_rsm_txbuf *cpu_addr = txbuf_get();
+    if(cpu_addr == NULL)
+    {
+        spin_unlock_irqrestore(&g_vdevrsm->vqtx_lock, flags);
+        LOG_RSMFE(LEVEL_ERR, " rsm txbuf send failed. No free buffers \n");
+        return -ENOSPC;
+    }
     memcpy(cpu_addr,send_buf,sizeof(struct virtio_rsm_txbuf));
 
     sg_init_one(sg, cpu_addr, sizeof(struct virtio_rsm_txbuf));
@@ -209,6 +216,17 @@ static int virtio_rsm_probe(struct virtio_device *vdev)
     struct virtio_rsm_dev *vdev_rsm = NULL;
     int i,err;
 
+	if (!virtio_has_feature(vdev, VIRTIO_F_VERSION_1))
+    {
+		dev_err(&vdev->dev,
+			"RSM BE not loaded on the host\n");
+		return -ENODEV;
+    }
+	if (!virtio_has_feature(vdev, VIRTIO_RSM_F_NSP_SHARING)) {
+		dev_err(&vdev->dev,
+			"NSP Sharing is not enabled on the host\n");
+		return -ENODEV;
+	}
     vdev_rsm = kzalloc(sizeof(struct virtio_rsm_dev), GFP_KERNEL);
   	if (!vdev_rsm) {
   		err = -ENOMEM;
@@ -291,12 +309,18 @@ static struct virtio_device_id id_table[] = {
     { 0 },
 };
 
+static unsigned int features[] = {
+	VIRTIO_RSM_F_NSP_SHARING,
+};
+
 static struct virtio_driver virtio_rsm_driver = {
-        .id_table =     id_table,
-        .probe =        virtio_rsm_probe,
-        .remove =       virtio_rsm_remove,
-	.driver.name = KBUILD_MODNAME,
-	.driver.owner = THIS_MODULE,
+    .feature_table		= features,
+    .feature_table_size	= ARRAY_SIZE(features),
+    .id_table =     id_table,
+    .probe =        virtio_rsm_probe,
+    .remove =       virtio_rsm_remove,
+    .driver.name = KBUILD_MODNAME,
+    .driver.owner = THIS_MODULE,
 };
 
 static int __init virtio_rsm_init(void)
