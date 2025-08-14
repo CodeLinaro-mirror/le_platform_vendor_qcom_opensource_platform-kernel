@@ -70,10 +70,16 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
     struct virtio_rsm_txbuf *txbuf = NULL;
     int idx = 0;
     int err = NO_ERROR;
+
     if ((handle == NULL) || (upid == 0))
     {
-        LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. Invalid Args \n",err);
+        LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. Invalid Args \n");
         return -EINVAL;
+    }
+    if (g_vdevrsm == NULL)
+    {
+        LOG_RSMFE(LEVEL_ERR, "rsm_register unsuccessful. No device\n");
+        return -ENODEV;
     }
 
     /*add client to client table*/
@@ -148,6 +154,11 @@ int rsm_acquire(rsm_handle handle, char* job_name, rsm_acquire_rsp_v2 *response)
         LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. invalid inputs \n");
         return -EINVAL;
     }
+    if (g_vdevrsm == NULL)
+    {
+        LOG_RSMFE(LEVEL_ERR, "rsm_acquire unsuccessful. No device\n");
+        return -ENODEV;
+    }
     /*find client in client table*/
     idx = find_client_table_entry(handle);
     if(idx >= MAX_CLIENT)
@@ -201,10 +212,15 @@ int rsm_release_v2(rsm_handle handle, rsm_token token)
     struct virtio_rsm_txbuf *txbuf = NULL;
     int idx = 0;
     int err = NO_ERROR;
-    if (handle == 0)
+    if ((handle == 0) || (token == 0))
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_release unsuccessful. invalid inputs \n");
         return -EINVAL;
+    }
+    if (g_vdevrsm == NULL)
+    {
+        LOG_RSMFE(LEVEL_ERR, "rsm_release unsuccessful. No device\n");
+        return -ENODEV;
     }
     /*find client in client table*/
     idx = find_client_table_entry(handle);
@@ -262,6 +278,11 @@ int rsm_unregister_v2(rsm_handle handle)
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_unregister unsuccessful. invalid inputs \n");
         return -EINVAL;
+    }
+    if (g_vdevrsm == NULL)
+    {
+        LOG_RSMFE(LEVEL_ERR, "rsm_unregister unsuccessful. No device\n");
+        return -ENODEV;
     }
 
     /*find client in client table*/
