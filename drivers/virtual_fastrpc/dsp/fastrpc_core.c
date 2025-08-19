@@ -277,7 +277,7 @@ struct virt_mdctx_manage_msg {
 	/* [in]: number of domain id */
 	u32 num_domains;
 	/* [in]: array of cid returned by virt_fastrpc_open */
-	s32 cid[0];
+	s32 cid[];
 } __packed;
 
 static int fastrpc_mem_map_to_dsp(struct fastrpc_user *fl, int fd, int offset,
@@ -2460,7 +2460,7 @@ static int virt_fastrpc_mdctx_setup(struct fastrpc_user *fl,
 	struct fastrpc_common *gdriver = cctx->gdriver;
 	struct virt_mdctx_manage_msg *vmsg, *rsp = NULL;
 	struct virt_fastrpc_msg *msg;
-	int err, size;
+	int err, size, i;
 
 	size = sizeof(*vmsg) + sizeof(s32) * mdctx->num_domains;
 	msg = virt_alloc_msg(fl, size);
@@ -2474,15 +2474,18 @@ static int virt_fastrpc_mdctx_setup(struct fastrpc_user *fl,
 	vmsg->hdr.tid = current->pid;
 	vmsg->hdr.cid = fl->cid;
 	vmsg->hdr.cmd = VIRTIO_FASTRPC_CMD_MDCTX_MANAGE;
+	/* This len filled in header means the length of valid data. */
 	vmsg->hdr.len = size;
 	vmsg->hdr.msgid = msg->msgid;
 	vmsg->hdr.result = 0xffffffff;
 	vmsg->req = (u32)FASTRPC_MDCTX_SETUP;
 	vmsg->ctx = 0;
 	vmsg->num_domains = mdctx->num_domains;
-	memcpy(vmsg->cid, mdctx->cids, mdctx->num_domains * (sizeof(s32)));
+	for (i = 0; i < mdctx->num_domains; i++)
+		vmsg->cid[i] = mdctx->cids[i];
 
-	err = fastrpc_txbuf_send(fl, vmsg, sizeof(*vmsg));
+	/* This size provided to virtio_mmio also means the length of valid data. */
+	err = fastrpc_txbuf_send(fl, vmsg, size);
 	if (err)
 		goto bail;
 	wait_for_completion(&msg->work);
