@@ -4,7 +4,6 @@
  * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
-#include <linux/ion.h>
 #include <linux/sched.h>
 #include <linux/debugfs.h>
 #include <linux/crc32.h>
