@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/delay.h>
 #include <linux/sort.h>
 
 #include "fastrpc_common.h"
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+#include "fastrpc_rsm.h"
+#endif
 #include "virtio_fastrpc_mem.h"
 #include "virtio_fastrpc_queue.h"
 
@@ -1510,6 +1513,10 @@ struct vfastrpc_file *hfastrpc_file_alloc(const struct vfastrpc_operations *ops)
 	fl->num_cached_buf = 0;
 	INIT_HLIST_HEAD(&fl->remote_bufs);
 	INIT_HLIST_HEAD(&vfl->interrupted_cmds);
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	INIT_HLIST_HEAD(&vfl->rsm_list_per_session);
+	mutex_init(&vfl->rsm_list_mutex);
+#endif
 	init_waitqueue_head(&fl->async_wait_queue);
 	init_waitqueue_head(&fl->proc_state_notif.notif_wait_queue);
 	INIT_HLIST_NODE(&fl->hn);
@@ -1574,6 +1581,15 @@ int hfastrpc_file_free(struct vfastrpc_file *vfl)
 	atomic_add(1, &fl->proc_state_notif.notif_queue_count);
 	wake_up_interruptible(&fl->proc_state_notif.notif_wait_queue);
 	spin_unlock_irqrestore(&fl->proc_state_notif.nqlock, flags);
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	/*
+	 * unregister all the jobs corresponds to the same UPID
+	 * rsm_unregister_batch(vfl->upid) is to be implemented by rsmfe
+	 */
+	fastrpc_rsm_list_per_session_free(vfl);
+	mutex_destroy(&vfl->rsm_list_mutex);
+#endif
 
 	hfastrpc_context_list_dtor(vfl);
 	hfastrpc_cached_buf_list_free(vfl);
@@ -2356,6 +2372,17 @@ bail:
 	return;
 }
 
+bool fastrpc_domain_is_need_rsm(u32 domain_id, struct vfastrpc_file *vfl)
+{
+	if (domain_id < 0 || domain_id >= vfl->apps->num_channels) {
+		ADSPRPC_ERR("invalid channel 0x%x set for session\n",
+			domain_id);
+		return false;
+	}
+
+	return vfl->apps->domain_info ? vfl->apps->domain_info[domain_id].need_rsm : false ;
+}
+
 int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 				uint32_t msg_type,
 				struct fastrpc_ioctl_invoke_async *inv)
@@ -2364,6 +2391,9 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 	struct fastrpc_file *fl = to_fastrpc_file(vfl);
 	struct fastrpc_ioctl_invoke *invoke = &inv->inv;
 	int err = 0, interrupted = 0, domain = -1, perfErr = 0;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool is_need_rsm = false;
+#endif
 	struct timespec64 invoket = {0};
 	uint64_t *perf_counter = NULL;
 	bool isasyncinvoke = false, isworkdone = false;
@@ -2413,6 +2443,18 @@ int hfastrpc_internal_invoke(struct vfastrpc_file *vfl, uint32_t mode,
 	PERF_END);
 	if (err)
 		goto bail;
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	is_need_rsm = fastrpc_domain_is_need_rsm(domain, vfl);
+	if (is_need_rsm && invoke->handle > FASTRPC_STATIC_HANDLE_MAX) {
+		/* NSP is accessible and need RSM */
+		VERIFY(err, 0 == (err = fastrpc_rsm_acquire(vfl, current->pid)));
+		if (err) {
+			ADSPRPC_ERR("fastrpc rsm_acquire failed, pid %d\n", current->pid);
+			goto bail;
+		}
+	}
+#endif
 
 	PERF(fl->profile, GET_COUNTER(perf_counter, PERF_LINK),
 	VERIFY(err, 0 == (err = hfastrpc_invoke_send(ctx,
@@ -2485,6 +2527,11 @@ invoke_end:
 	ADSP_LOG("end err=%d, pid=%d,tid=%d,sc=%x,h=%x\n",
 			err, fl->tgid, current->pid,
 			inv->inv.sc, inv->inv.handle);
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	if (is_need_rsm && invoke->handle > FASTRPC_STATIC_HANDLE_MAX)
+		fastrpc_rsm_release(vfl, current->pid);
+#endif
 	return err;
 }
 
@@ -2795,6 +2842,10 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 	int err = 0, domain = -1;
 	struct vfastrpc_channel_ctx *channel_ctx = NULL;
 	uint64_t msg = 0;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool is_need_rsm = false;
+	hfastrpc_rsm_dspsignal_msg rsm_dspsignal_msg;
+#endif
 
 	// We don't check if the signal has even been allocated since we don't
 	// track outgoing signals in the driver. The userspace library does a
@@ -2822,8 +2873,29 @@ static int hfastrpc_dspsignal_signal(struct vfastrpc_file *vfl,
 	mutex_unlock(&channel_ctx->smd_mutex);
 
 	msg = (((uint64_t)vfl->upid) << 32) | ((uint64_t)sig->signal_id);
-	err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
 
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	is_need_rsm = fastrpc_domain_is_need_rsm(domain, vfl);
+	if (is_need_rsm) {
+		VERIFY(err, 0 == (err = fastrpc_rsm_acquire(vfl, vfl->upid)));
+		if (err)
+			goto bail;
+		rsm_dspsignal_msg.legacy_msg = msg;
+		rsm_dspsignal_msg.target_id = vfl->upid;
+		/* RSM case */
+		ADSPRPC_DEBUG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
+						rsm_dspsignal_msg.target_id, vfl->upid, sig->signal_id);
+		err = fastrpc_transport_send(domain, (void *)&rsm_dspsignal_msg,
+						sizeof(hfastrpc_rsm_dspsignal_msg), fl->tvm_remote_domain);
+	} else {
+		/* non-RSM case */
+		ADSPRPC_DEBUG("dspsignal msg sent, upid %d, signal_id %u\n",
+						vfl->upid, sig->signal_id);
+		err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
+	}
+#else
+	err = fastrpc_transport_send(domain, (void *)&msg, sizeof(msg), fl->tvm_remote_domain);
+#endif
 bail:
 	return err;
 }
@@ -2839,6 +2911,9 @@ static int hfastrpc_dspsignal_wait(struct vfastrpc_file *vfl,
 	struct fastrpc_dspsignal *s = NULL;
 	long ret = 0;
 	unsigned long irq_flags = 0;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool is_need_rsm = false;
+#endif
 
 	DSPSIGNAL_VERBOSE("Wait for signal %u\n", signal_id);
 	VERIFY(err, signal_id < DSPSIGNAL_NUM_SIGNALS);
@@ -2898,6 +2973,13 @@ static int hfastrpc_dspsignal_wait(struct vfastrpc_file *vfl,
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
 
 bail:
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	is_need_rsm = fastrpc_domain_is_need_rsm(vfl->domain, vfl);
+	if (is_need_rsm) {
+		fastrpc_rsm_release(vfl, vfl->upid);
+	}
+#endif
+
 	return err;
 }
 

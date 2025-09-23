@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/debugfs.h>
@@ -42,6 +42,8 @@
 #define VIRTIO_FASTRPC_F_MEM_MAP			8
 /* indicates fastrpc_mmap/fastrpc_munmap is supported */
 #define VIRTIO_FASTRPC_F_HYBRID				9
+
+#define VIRTIO_FASTRPC_F_RSM				13
 
 #define MAX_FASTRPC_BUF_SIZE		(1024*1024*4)
 #define DEF_FASTRPC_BUF_SIZE		(128*1024)
@@ -98,6 +100,7 @@ struct hfastrpc_config {
 	u32 version;
 	u32 domain_num;
 	u32 max_buf_size;
+	u32 domain_info_offset;
 } __packed;
 
 /* FastRPC remote subsystem state*/
@@ -999,6 +1002,26 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 			me->num_channels = config.domain_num;
 		else
 			me->num_channels = NUM_CHANNELS;
+
+		if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_RSM)) {
+			dev_info(&vdev->dev, "RSM is supported\n");
+			virtio_cread(vdev, struct hfastrpc_config, domain_info_offset,
+					&config.domain_info_offset);
+			me->domain_info = kzalloc(sizeof(struct fastrpc_domain_config) *
+									me->num_channels, GFP_KERNEL);
+			if (!me->domain_info)
+				return -ENOMEM;
+			virtio_cread_bytes(vdev, config.domain_info_offset, &me->domain_info[0],
+							   sizeof(struct fastrpc_domain_config) * me->num_channels);
+			for (int i = 0; i < me->num_channels; i++) {
+				/* GVM will only access 3 and 4. Other areas will not be accessed */
+				if (i == 3 || i == 4)
+					dev_info(&vdev->dev, "domain_id, %d, need_rsm, %d\n",
+							i, me->domain_info[i].need_rsm);
+			}
+		} else {
+			dev_info(&vdev->dev, "RSM is not supported\n");
+		}
 	} else {
 		dev_dbg(&vdev->dev, "set domain_num to default value\n");
 		me->num_channels = NUM_CHANNELS;
@@ -1116,6 +1139,9 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 	unregister_chrdev_region(me->dev_no, me->num_channels);
 	debugfs_remove_recursive(me->debugfs_root);
 
+	if (me->domain_info)
+		kfree(me->domain_info);
+
 	hfastrpc_deinit();
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
@@ -1140,6 +1166,7 @@ static unsigned int features[] = {
 	VIRTIO_FASTRPC_F_DOMAIN_NUM,
 	VIRTIO_FASTRPC_F_VQUEUE_SETTING,
 	VIRTIO_FASTRPC_F_HYBRID,
+	VIRTIO_FASTRPC_F_RSM,
 };
 
 static struct virtio_driver hybrid_fastrpc_driver = {
