@@ -25,5 +25,10 @@ ifeq ($(CONFIG_COMPAT), y)
   hfastrpc-objs += dsp/adsprpc_compat.o dsp/fastrpc_compat.o
 endif
 
+ifeq ($(CONFIG_HYBRID_FASTRPC_RSM), y)
+  hfastrpc-objs += dsp/fastrpc_rsm.o
+  ccflags-y += -DCONFIG_HYBRID_FASTRPC_RSM=1
+endif
+
 obj-$(CONFIG_VIRTIO_FASTRPC) += vfastrpc.o
 obj-$(CONFIG_HYBRID_FASTRPC) += hfastrpc.o

@@ -5,8 +5,11 @@ ifneq (,$(call is-board-platform-in-list2, $(MSMSTEPPE) msmnile gen4))
     BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/boot_marker.ko
+    BOARD_VENDOR_RAMDISK_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/boot_marker.ko
+    BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/boot_marker.ko
+    BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/boot_marker.ko
 
-ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
+ifeq (,$(filter msmnile_gvmq msmnile_gvmq_sgt gen4_gvm gen4_gvm_sgt gen4_hgy gen4_gvm_gy gen4_gvm_gy_sgt, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)$(TARGET_BOARD_DERIVATIVE_SUFFIX)))
 # Drivers for Metal only
 
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
@@ -64,7 +67,10 @@ ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/hfastrpc.ko
 endif
 
+ifeq ($(TARGET_HAS_VIRTIO_RSM), true)
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/rsm_fe.ko
+endif
+
 endif
 endif
 # Drivers for Talos only
