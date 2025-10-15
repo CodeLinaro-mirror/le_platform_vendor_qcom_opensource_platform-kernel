@@ -9,6 +9,7 @@ def define_autogvm():
 	    "socinfo_dt",
 	    "vm-cpufreq",
 	    "virtio_ssr",
+	    "compressched_fe",
 	    "subsystem_notif_virt",
 	    "hfastrpc"
 	],

@@ -55,4 +55,6 @@ obj-$(CONFIG_QCOM_SUBSYS_STATUS) += subsystem_status.o
 ifeq (,$(filter $(BOARD_PLATFORM), sdmsteppe gen4 gen5 msmnile))
   obj-m				+= virtual_fastrpc/
 endif
+  obj-m				+= compressched_fe/
+
 obj-$(CONFIG_MSM_BOOT_MARKER)	+= boot_marker.o

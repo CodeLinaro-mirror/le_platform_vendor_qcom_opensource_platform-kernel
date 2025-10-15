@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+ccflags-y += $(LINUX_INC)
+
+LINUXINCLUDE	+= \
+		   -I$(PLAT_DRV_ROOT)/include \
+		   -I$(PLAT_DRV_ROOT)/include/linux
+
+compressched_fe-objs := virtio_compressched_base.o\
+			virtio_compressched_client.o
+
+obj-$(CONFIG_VIRTIO_COMPRESSCHEDFE) += compressched_fe.o

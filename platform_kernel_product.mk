@@ -23,6 +23,7 @@ endif
 ifeq ($(TARGET_HAS_HYBRID_FASTRPC), true)
     PRODUCT_PACKAGES += hfastrpc.ko
 endif
+    PRODUCT_PACKAGES += compressched_fe.ko
 endif
 endif
 
