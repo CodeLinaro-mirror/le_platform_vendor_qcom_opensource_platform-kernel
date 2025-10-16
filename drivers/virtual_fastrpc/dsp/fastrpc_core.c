@@ -3342,6 +3342,7 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	struct fastrpc_channel_ctx *cctx = fl->cctx;
 	bool proc_init = false;
 	unsigned long flags;
+	int i;
 
 	spin_lock_irqsave(&fl->lock, flags);
 	if (fl->state == DSP_CREATE_COMPLETE)
@@ -3368,6 +3369,17 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	if (fl->tgid_frpc != -1)
 		ida_free(&cctx->tgid_frpc_ida,
 			fl->tgid_frpc - (cctx->domain_id * FASTRPC_UNIQUE_ID_CONST));
+        /*
+	 * fl->signal_groups is a static pointer array allocated during device open.
+	 * The memory it points to is allocated during dspqueue_create, but during
+	 * dspqueue_close, the memory is not freed but marked as unused. So, that needs
+	 * to be freed here. And kfree will do sanity check on NULL pointer.
+	 * */
+	spin_lock_irqsave(&fl->dspsignals_lock, flags);
+	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS / FASTRPC_DSPSIGNAL_GROUP_SIZE); i++)
+		kfree(fl->signal_groups[i]);
+	spin_unlock_irqrestore(&fl->dspsignals_lock, flags);
+
 	fastrpc_free_user(fl);
 #ifdef CONFIG_DEBUG_FS
 	debugfs_remove(fl->debugfs_file);
