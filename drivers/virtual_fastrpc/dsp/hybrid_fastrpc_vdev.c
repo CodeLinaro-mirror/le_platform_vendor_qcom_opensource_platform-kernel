@@ -126,26 +126,6 @@ void fastrpc_update_gdriver(struct fastrpc_channel_ctx *cctx, int flag)
 	}
 }
 
-void fastrpc_notify_users(struct fastrpc_user *user)
-{
-	struct fastrpc_invoke_ctx *ctx;
-	struct fastrpc_user *fl;
-
-	spin_lock(&user->lock);
-	list_for_each_entry(ctx, &user->pending, node) {
-		fl = ctx->fl;
-		ctx->retval = -EPIPE;
-		ctx->is_work_done = true;
-		complete(&ctx->work);
-	}
-	list_for_each_entry(ctx, &user->interrupted, node) {
-		ctx->retval = -EPIPE;
-		ctx->is_work_done = true;
-		complete(&ctx->work);
-	}
-	spin_unlock(&user->lock);
-}
-
 static int recv_single(struct virt_msg_hdr *rsp, unsigned int len)
 {
 	struct fastrpc_common *gdriver = &g_frpc;

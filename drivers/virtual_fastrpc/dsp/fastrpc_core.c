@@ -2120,6 +2120,42 @@ static int fastrpc_dspsignal_cancel_wait(struct fastrpc_user *fl,
 	return 0;
 }
 
+/*
+ * Unblock all dspsignals in pending state. It is only used by
+ * SSR use case, because driver won't handle ioctl from user to
+ * cancel pending dspsignal wait, we need to cancel them by driver
+ * itself.
+ * */
+static int fastrpc_dspsignal_cancel_all(struct fastrpc_user *fl)
+{
+	u32 i = 0, j = 0;
+	struct fastrpc_dspsignal *s = NULL;
+	struct fastrpc_dspsignal *group = NULL;
+	unsigned long irq_flags = 0;
+
+	RPC_DBG("Cancel all signals for pid %d\n", fl->tgid);
+
+	spin_lock_irqsave(&fl->dspsignals_lock, irq_flags);
+	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS
+		/ FASTRPC_DSPSIGNAL_GROUP_SIZE); i++) {
+		group = fl->signal_groups[i];
+		if (!group)
+			continue;
+
+		for (j = 0; j < FASTRPC_DSPSIGNAL_GROUP_SIZE; j++) {
+			s = &group[j];
+			if (s->state == DSPSIGNAL_STATE_PENDING) {
+				s->state = DSPSIGNAL_STATE_CANCELED;
+				complete_all(&s->comp);
+			}
+		}
+	}
+	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
+
+	RPC_DBG("All signals canceled for pid %d\n", fl->tgid);
+	return 0;
+}
+
 static int fastrpc_invoke_dspsignal(struct fastrpc_user *fl,
 					struct fastrpc_internal_dspsignal *fsig)
 {
@@ -2144,6 +2180,27 @@ static int fastrpc_invoke_dspsignal(struct fastrpc_user *fl,
 	}
 
 	return err;
+}
+
+void fastrpc_notify_users(struct fastrpc_user *user)
+{
+	struct fastrpc_invoke_ctx *ctx;
+	struct fastrpc_user *fl;
+
+	spin_lock(&user->lock);
+	list_for_each_entry(ctx, &user->pending, node) {
+		fl = ctx->fl;
+		ctx->retval = -EPIPE;
+		ctx->is_work_done = true;
+		complete(&ctx->work);
+	}
+	list_for_each_entry(ctx, &user->interrupted, node) {
+		ctx->retval = -EPIPE;
+		ctx->is_work_done = true;
+		complete(&ctx->work);
+	}
+	fastrpc_dspsignal_cancel_all(user);
+	spin_unlock(&user->lock);
 }
 
 static int fastrpc_wait_on_notif_queue(struct fastrpc_internal_notif_rsp *notif_rsp,
@@ -2278,9 +2335,20 @@ static int fastrpc_get_frpc_cid(uint32_t domain, uint32_t session,
 			break;
 		}
 	}
-
+	/*
+	 * In multicore usecase, this is ensured by fastrpc lib that
+	 * sessions are opened before mdctx creation.
+	 * If no user-object is found for given remote session in the
+	 * current channel context's list gotten from fastrpc_domain
+	 * struct with logical domain id, it means the specific DSP
+	 * has gone thru SSR and the user-object was present in the
+	 * legacy channel context's list.
+	 * But if fastrpc lib is not working as expected, this error
+	 * code might not be accurate, that's a trade-off for simplicity
+	 * of design without any side effect.
+	 * */
 	if (!found)
-		err = -ESRCH;
+		err = -EPIPE;
 	fastrpc_channel_update_invoke_cnt(cctx, false);
 	spin_unlock_irqrestore(&cctx->lock, flags);
 bail:
