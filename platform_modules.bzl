@@ -1,5 +1,6 @@
 DRIVERS_PATH = "drivers"
 DSP_PATH = "drivers/virtual_fastrpc/dsp"
+COMPRESSCHED_FE_PATH = "drivers/compressched_fe"
 platform_modules = {}
 platform_modules_by_config = {}
 
@@ -130,6 +131,17 @@ register_platform_kernel_module(
     default_srcs = [
         "virtio_ssr.c",
 	"qcom_common.h",
+    ],
+)
+
+register_platform_kernel_module(
+    name = "compressched_fe",
+    path = COMPRESSCHED_FE_PATH,
+    default_srcs = [
+        "virtio_compressched_base.c",
+        "virtio_compressched_base.h",
+        "virtio_compressched_client.c",
+        "virtio_compressched_client.h"
     ],
 )
 
