@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __FASTRPC_COMMON_H__
@@ -18,6 +18,9 @@
 #include <linux/wait.h>
 #include "adsprpc_compat.h"
 #include "adsprpc_shared.h"
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+#include "../../rsm_fe/virtio_rsm_client.h"
+#endif
 
 #define NON_SECURE_CHANNEL		0
 #define SECURE_CHANNEL			1
@@ -218,7 +221,17 @@ struct vfastrpc_file {
 	const struct vfastrpc_operations *ops;
 	int domain;
 	int procattrs;
+	/* unique ID per session/pd */
 	int upid;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	/* mutex used to protected the following list operations */
+	struct mutex rsm_list_mutex;
+	/*
+	 * A per session/pd list structure used in hybrid fastrpc to store resources
+	 * associated with registered RSM instance.
+	 */
+	struct hlist_head rsm_list_per_session;
+#endif
 	/*
 	 * List to store virtio fastrpc cmds interrupted by signal while waiting
 	 * for completion.
@@ -307,6 +320,26 @@ struct vfastrpc_vqbuf {
 	void *buf;
 };
 
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+struct vfastrpc_rsm_entry {
+	struct hlist_node hn;
+	struct kref refcount;
+	/* thread id or dspqueue id*/
+	u32 target_id;
+	/*
+	 * the rsm handle registered for this thread
+	 * register before this thread starts offloading computation task to dsp
+	 * unregister in session exit
+	 */
+	rsm_handle handle;
+	/*
+	 * response returned for resource acquire by calling rsm_acquire
+	 * which will be used to call rsm_release_v2
+	 */
+	rsm_acquire_rsp_v2 response;
+};
+#endif
+
 struct vfastrpc_channel_ctx {
 	char *name;
 	char *subsys;
@@ -336,6 +369,13 @@ struct virt_fastrpc_vq {
 };
 
 struct virt_fastrpc_msg;
+
+struct fastrpc_domain_config {
+	u32 domain_type;
+	u32 instance_id;
+	u32 logical_id;  //The first three are for device discovery feature extensions
+	u32 need_rsm; //e.g. ): dont need, 1: need
+};
 
 struct vfastrpc_apps {
 	struct virtio_device *vdev;
@@ -372,6 +412,7 @@ struct vfastrpc_apps {
 	spinlock_t hlock;
 	struct hlist_head drivers;
 	uint32_t duplicate_rsp_err_cnt;
+	struct fastrpc_domain_config *domain_info;
 };
 
 int get_unique_hlos_process_id(struct vfastrpc_file *vfl);
@@ -382,6 +423,7 @@ void virt_free_msg(struct vfastrpc_file *vfl, struct virt_fastrpc_msg *msg);
 struct virt_fastrpc_msg *virt_alloc_msg(struct vfastrpc_file *vfl, int size);
 int virt_fastrpc_get_dsp_info(struct vfastrpc_file *vfl,
 		u32 *dsp_attributes);
+bool fastrpc_domain_is_need_rsm(u32 domain_id, struct vfastrpc_file *vfl);
 
 static inline unsigned long long msm_hr_timer_get_sclk_ticks(void)
 {

@@ -118,3 +118,5 @@ def define_consolidate_gki_perf_modules(target, modules, extra_options = [], con
     define_target_variant_modules(target, "consolidate", modules, extra_options, config_option)
     define_target_variant_modules(target, "gki", modules, extra_options, config_option)
     define_target_variant_modules(target, "perf", modules, extra_options, config_option)
+    define_target_variant_modules(target, "debug-defconfig", modules, extra_options, config_option)
+    define_target_variant_modules(target, "defconfig", modules, extra_options, config_option)
