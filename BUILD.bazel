@@ -3,9 +3,11 @@ load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
 ddk_headers(
     name = "fastrpc_local_headers",
     hdrs = glob([
-	"drivers/virtual_fastrpc/include/uapi/*.h"
+        "drivers/virtual_fastrpc/include/uapi/*.h",
+        # needed to compile rsm fe relevant code in fastRPC FE
+        "drivers/compressched_fe/*.h",
     ]),
-    includes = ["drivers/virtual_fastrpc/include/uapi"],
+    includes = ["drivers/virtual_fastrpc/include/uapi", "drivers/compressched_fe"],
 )
 
 ddk_headers(

@@ -13,8 +13,14 @@ platform_modules_by_config = {}
 # is enabled. If the value is another dictionary, then you can specify sources to be added if the config option is DISABLED by having a list under the
 # default_srcs: A list of sources to be added to the module regardless of configuration options.
 # deps: A list of kernel_module or ddk_module rules that this module depends on.
+# config_deps: A dictionary of kernel_module or ddk_module rules that this module depends on if a configuration option is enabled or not. The keys to the
+# dictionary are the name of the config option, and the value depends If it is a list, it will just be the list of kernel_module or ddk_module rules to
+# be added to the module if the config option is enabled.
+# config_copts: A dictionary of compile options used for building this target if a configuration option is enabled or not. The keys to the dictionary are
+# the name of the config option, and the value depends If it is a list, it will just be the compile options used for building this target to
+# be added to the module if the config option is enabled.
 
-def register_platform_kernel_module(name, path = None, config_option = None, default_srcs = [], config_srcs = {}, deps = [], srcs = [], copts = [], hdrs = []):
+def register_platform_kernel_module(name, path = None, config_option = None, default_srcs = [], config_srcs = {}, deps = [], config_deps = {}, srcs = [], copts = [], config_copts = {}, hdrs = []):
     processed_config_srcs = {}
     for config_src_name in config_srcs:
         config_src = config_srcs[config_src_name]
@@ -24,6 +30,24 @@ def register_platform_kernel_module(name, path = None, config_option = None, def
         else:
             processed_config_srcs[config_src_name] = config_src
 
+    processed_config_deps = {}
+    for config_dep_name in config_deps:
+        config_dep = config_deps[config_dep_name]
+
+        if type(config_dep) == "list":
+            processed_config_deps[config_dep_name] = {True: config_dep}
+        else:
+            processed_config_deps[config_dep_name] = config_dep
+
+    processed_config_copts = {}
+    for config_copt_name in config_copts:
+        config_copt = config_copts[config_copt_name]
+
+        if type(config_copt) == "list":
+            processed_config_copts[config_copt_name] = {True: config_copt}
+        else:
+            processed_config_copts[config_copt_name] = config_copt
+
     module = {
         "name": name,
         "path": path,
@@ -31,7 +55,9 @@ def register_platform_kernel_module(name, path = None, config_option = None, def
         "config_srcs": processed_config_srcs,
         "config_option": config_option,
         "deps": deps,
+        "config_deps": processed_config_deps,
         "copts": copts,
+        "config_copts": processed_config_copts,
         "srcs": srcs,
         "hdrs": hdrs,
     }
@@ -145,6 +171,7 @@ register_platform_kernel_module(
     ],
 )
 
+# For the RSM function to work, fastRPC BE configuration is still required
 register_platform_kernel_module(
     name = "hfastrpc",
     path = DSP_PATH,
@@ -161,5 +188,17 @@ register_platform_kernel_module(
         "fastrpc_core.h",
         "fastrpc_vq.h",
     ],
+    config_srcs = {
+        "CONFIG_HYBRID_FASTRPC_RSM": [
+            "fastrpc_rsm.c",
+            "fastrpc_rsm.h",
+         ],
+    },
     deps = [":fastrpc_local_headers"],
+    config_deps = {
+        "CONFIG_HYBRID_FASTRPC_RSM": [":%b_compressched_fe"],
+    },
+    config_copts = {
+        "CONFIG_HYBRID_FASTRPC_RSM": ["-DCONFIG_HYBRID_FASTRPC_RSM=1"],
+    },
 )

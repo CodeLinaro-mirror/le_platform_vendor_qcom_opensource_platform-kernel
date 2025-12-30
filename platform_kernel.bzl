@@ -35,7 +35,8 @@ def _get_options(target, variant, target_config_option, modules, extra_options):
             else:
                 _console_print(target, variant, None, 'WARNING: Config option "{}" corresponds to platform module {}, but this module is not listed in module list!'.format(option, module_name))
         else:
-            all_options[option] = True
+            if module_name in modules:
+                all_options[option] = True
 
     if target_config_option in all_options:
         redundant_options.append(target_config_option)
@@ -59,6 +60,21 @@ def _get_module_srcs(target, variant, module, options):
         _console_print(target, variant, module["name"], "WARNING: Module has no sources attached!")
 
     return globbed_srcs
+
+def _get_module_deps(target, variant, module, options):
+    deps = [] + module["deps"]
+    for option in module["config_deps"]:
+        deps.extend(module["config_deps"][option].get(option in options, []))
+
+    deps = [_replace_formatting_codes(target, variant, dep) for dep in deps]
+    return deps
+
+def _get_module_copts(module, options):
+    copts = [] + module["copts"]
+    for option in module["config_copts"]:
+        copts.extend(module["config_copts"][option].get(option in options, []))
+
+    return copts
 
 def define_target_variant_modules(target, variant, modules, extra_options = [], config_option = None):
     kernel_build_variant = "{}_{}".format(target, variant)
@@ -84,16 +100,18 @@ def define_target_variant_modules(target, variant, modules, extra_options = [], 
     for module in modules:
         rule_name = "{}_{}".format(kernel_build_variant, module["name"])
         module_srcs = _get_module_srcs(target, variant, module, options)
+        module_deps = _get_module_deps(target, variant, module, options)
+        module_copts = _get_module_copts(module, options)
 
         ddk_module(
             name = rule_name,
 	    kernel_build = kernel_build,
             srcs = module_srcs,
             out = "{}.ko".format(module["name"]),
-            deps = deps + [_replace_formatting_codes(target, variant, dep) for dep in module["deps"]],
+            deps = deps + module_deps,
             hdrs = module["hdrs"],
             local_defines = target_local_defines,
-            copts = module["copts"],
+            copts = module_copts,
         )
         module_rules.append(rule_name)
 

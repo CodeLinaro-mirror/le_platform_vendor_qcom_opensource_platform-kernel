@@ -37,7 +37,17 @@
 /* indicates fastrpc_mmap/fastrpc_munmap is supported */
 #define VIRTIO_FASTRPC_F_HYBRID				9
 
-#define VIRTIO_FASTRPC_F_DEVICE_DISCOVERY 11
+#define VIRTIO_FASTRPC_F_DEVICE_DISCOVERY		11
+
+/*
+ * the feature bit 12 is reserved for the muti-core feature
+ * TODO: need relevant change to enable multi-core feature
+ * based on this bit when this driver needs to be share by
+ * platform not supporting this feature.
+ */
+
+/* indicates rsm/compressched is supported */
+#define VIRTIO_FASTRPC_F_RSM				13
 
 #define MAX_FASTRPC_BUF_SIZE		(1024*1024*4)
 #define DEF_FASTRPC_BUF_SIZE		(128*1024)
@@ -97,11 +107,12 @@ struct hfastrpc_config {
 	u32 domain_info_offset;
 } __packed;
 
+/* device discovery specific */
 struct fastrpc_domain_config {
 	u32 domain_type;
 	u32 instance_id;
 	u32 logical_id;
-	u32 reserved;
+	u32 need_rsm;
 };
 
 static struct fastrpc_common g_frpc;
@@ -110,9 +121,26 @@ static struct fastrpc_domain_config * g_domain_info = NULL;
 
 static bool g_is_device_discovery_supported = false;
 
+static bool g_is_rsm_supported = false;
+
 bool is_device_discovery_supported(void)
 {
 	return g_is_device_discovery_supported;
+}
+
+/* RSM is heavily dependent on device discovery */
+bool fastrpc_domain_needs_rsm(u32 logical_id)
+{
+	int i = 0;
+
+	if (g_is_rsm_supported == false)
+		return false;
+
+	for (i = 0; i < g_frpc.num_channels; i++) {
+		if (logical_id == g_domain_info[i].logical_id)
+			return g_domain_info[i].need_rsm ? true : false;
+	}
+	return false;
 }
 
 void fastrpc_update_gdriver(struct fastrpc_channel_ctx *cctx, int flag)
@@ -616,6 +644,7 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 			if (!g_domain_info)
 				return -ENOMEM;
 
+			/* need_rsm must be initialized to 0 or 1 by BE */
 			virtio_cread_bytes(vdev, config.domain_info_offset, &g_domain_info[0],
 							   sizeof(struct fastrpc_domain_config) * gdriver->num_channels);
 			g_is_device_discovery_supported = true;
@@ -623,6 +652,14 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 			mutex_init(&g_frpc.hmut);
 			hash_init(g_frpc.fastrpc_domains_table);
 			fastrpc_sysfs_register_kset();
+
+			if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_RSM)) {
+				RPC_INFO("RSM is supported by fastRPC BE device\n");
+				g_is_rsm_supported = true;
+				for (i = 0; i < gdriver->num_channels; i++)
+					RPC_INFO("dsp with logical_id (%u): need_rsm (%u)\n",
+							g_domain_info[i].logical_id, g_domain_info[i].need_rsm);
+			}
 		} else {
 			RPC_INFO("Device discovery is not supported\n");
 			g_is_device_discovery_supported = false;
@@ -719,6 +756,7 @@ static unsigned int features[] = {
 	VIRTIO_FASTRPC_F_VQUEUE_SETTING,
 	VIRTIO_FASTRPC_F_HYBRID,
 	VIRTIO_FASTRPC_F_DEVICE_DISCOVERY,
+	VIRTIO_FASTRPC_F_RSM,
 };
 
 static struct virtio_driver hybrid_fastrpc_driver = {

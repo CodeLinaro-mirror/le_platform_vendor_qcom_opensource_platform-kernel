@@ -7,6 +7,9 @@
 #include <linux/sort.h>
 
 #include "fastrpc_common.h"
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+#include "fastrpc_rsm.h"
+#endif
 #include "fastrpc_core.h"
 #include "fastrpc_mem.h"
 #include "fastrpc_vq.h"
@@ -1771,6 +1774,9 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl, u32 kernel,
 	int err = 0, perferr = 0, interrupted = 0;
 	u64 *perf_counter = NULL;
 	struct timespec64 invoket = {0};
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool need_rsm = false;
+#endif
 
 	RPC_DBG("start pid=%d,tid=%d,sc=0x%x,hdl=0x%x\n",
 			fl->tgid, current->pid, inv->sc, inv->handle);
@@ -1809,6 +1815,23 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl, u32 kernel,
 
 	/* make sure that all CPU memory writes are seen by DSP */
 	dma_wmb();
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	/*
+	 * static handles are directly used by fastRPC itself rather than its client,
+	 * and also it will not use those special DSP resource (e.g., VTCM) we need to
+	 * use RSM to control their sharing w/ host side
+	 */
+	if (need_rsm && handle > FASTRPC_MAX_STATIC_HANDLE) {
+		/* need to acquire resource from rsm/compresssched before accessing DSP */
+		err = fastrpc_rsm_acquire(fl, current->pid);
+		if (err) {
+			RPC_ERR("fastrpc_rsm_acquire failed, pid %d\n", current->pid);
+			goto bail;
+		}
+	}
+#endif
 
 	PERF(fl->profile, GET_COUNTER(perf_counter, PERF_LINK),
 	err = fastrpc_invoke_send(ctx, kernel, handle);
@@ -1870,6 +1893,10 @@ bail:
 			err, fl->tgid, current->pid,
 			inv->sc, inv->handle);
 
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	if (need_rsm && handle > FASTRPC_MAX_STATIC_HANDLE)
+		fastrpc_rsm_release(fl, current->pid);
+#endif
 	return err;
 }
 
@@ -1913,6 +1940,10 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 	struct fastrpc_channel_ctx *cctx = NULL;
 	u64 msg = 0;
 	u32 signal_id = fsig->signal_id;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool need_rsm = false;
+	hfastrpc_rsm_dspsignal_msg rsm_dspsignal_msg;
+#endif
 
 	DSPSIGNAL_VERBOSE("send signal PID %u, unique fastrpc pid %u signal %u\n",
 			fl->tgid, fl->upid, signal_id);
@@ -1924,8 +1955,28 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 	}
 
 	msg = (((uint64_t)fl->upid) << 32) | ((uint64_t)fsig->signal_id);
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	if (need_rsm) {
+		err = fastrpc_rsm_acquire(fl, fl->upid);
+		if (err)
+			return err;
+		rsm_dspsignal_msg.legacy_msg = msg;
+		rsm_dspsignal_msg.target_id = fl->upid;
+		/* RSM case */
+		RPC_DBG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
+						rsm_dspsignal_msg.target_id, fl->upid, fsig->signal_id);
+		err = fastrpc_transport_send(cctx, (void *)&rsm_dspsignal_msg,
+						sizeof(hfastrpc_rsm_dspsignal_msg));
+	} else {
+		/* non-RSM case */
+		RPC_DBG("dspsignal msg sent, upid %d, signal_id %u\n",
+						fl->upid, fsig->signal_id);
+		err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
+	}
+#else
 	err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
-
+#endif
 	return err;
 }
 
@@ -1939,6 +1990,9 @@ static int fastrpc_dspsignal_wait(struct fastrpc_user *fl,
 	struct fastrpc_dspsignal *s = NULL;
 	long ret = 0;
 	unsigned long irq_flags = 0;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	bool need_rsm = false;
+#endif
 
 	DSPSIGNAL_VERBOSE("wait for signal %u\n", signal_id);
 	if (!(signal_id < FASTRPC_DSPSIGNAL_NUM_SIGNALS)) {
@@ -1991,7 +2045,11 @@ static int fastrpc_dspsignal_wait(struct fastrpc_user *fl,
 		err = -EINTR;
 	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
-
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	if (need_rsm)
+		fastrpc_rsm_release(fl, fl->upid);
+#endif
 	return err;
 }
 
@@ -3323,6 +3381,10 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 	INIT_LIST_HEAD(&fl->mdctxs);
 	init_waitqueue_head(&fl->proc_state_notif.notif_wait_queue);
 	spin_lock_init(&fl->proc_state_notif.nqlock);
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	INIT_HLIST_HEAD(&fl->rsm_list_per_session);
+	mutex_init(&fl->rsm_list_mutex);
+#endif
 
 	fl->cctx = cctx;
 	fl->tgid = current->tgid;
@@ -3433,6 +3495,15 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	atomic_add(1, &fl->proc_state_notif.notif_queue_count);
 	wake_up_interruptible(&fl->proc_state_notif.notif_wait_queue);
 	spin_unlock_irqrestore(&fl->proc_state_notif.nqlock, flags);
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	/*
+	 * unregister all the jobs corresponds to the same UPID
+	 * rsm_unregister_batch(fl->upid) is to be implemented by rsmfe
+	 */
+	fastrpc_rsm_list_per_session_free(fl);
+	mutex_destroy(&fl->rsm_list_mutex);
+#endif
 
 	if (fl->tgid_frpc != -1)
 		ida_free(&cctx->tgid_frpc_ida,

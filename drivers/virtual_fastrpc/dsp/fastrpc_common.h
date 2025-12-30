@@ -21,6 +21,9 @@
 #include <linux/kobject.h>
 #include <linux/hashtable.h>
 #include "fastrpc.h"
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+#include "virtio_compressched_client.h"
+#endif
 
 #define ADSP_DOMAIN_ID			0
 #define MDSP_DOMAIN_ID			1
@@ -413,6 +416,16 @@ struct fastrpc_user {
 	struct dentry *debugfs_file;
 	char *debugfs_buf;
 #endif
+
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+	/* mutex used to protect the following list */
+	struct mutex rsm_list_mutex;
+	/*
+	 * A per session/pd list structure used in hybrid fastrpc to store resources
+	 * associated with registered RSM/compressched handle instance.
+	 */
+	struct hlist_head rsm_list_per_session;
+#endif
 	int tgid;
 	int tgid_frpc;
 	u32 pd_type;
@@ -505,6 +518,35 @@ struct virt_fastrpc_vq {
 	struct virtqueue *vq;
 };
 
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
+struct vfastrpc_rsm_entry {
+	struct hlist_node hn;
+	struct kref refcount;
+	/*
+	 * thread id or unique fastrpc pid (upid)
+	 * In normal invoke case, it will be thread id (gotten
+	 * from current->pid)
+	 * In dspqueue case, it will be unique fastrpc pid (used
+	 * by DSP side to identify different PD/session)
+	 */
+	u32 target_id;
+	/*
+	 * In normal invoke case, the compressched handle registered for this thread
+	 * and the registration occurs before before this thread starts offloading
+	 * computation task to dsp through invoke.
+	 * In dspqueue case, the compressched handle registered for this session
+	 * registration occurs when HLOS side fastRPC begins signaling dsp to
+	 * read the data written by fastrpc client through dspqueue APIs.
+	 * In all cases, unregistration occurs in session/PD exit
+	 */
+	compressched_handle handle;
+	/*
+	 * response returned for resource acquire by calling compressched_acquire
+	 * which will be used to call compressched_release_v2
+	 */
+	compressched_acquire_rsp_v2 response;
+};
+#endif
 
 /* Struct to hold globally used variables */
 struct fastrpc_common {
@@ -584,7 +626,7 @@ long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 int fastrpc_convert_legacy_id_to_logical_id(u32 legacy_id,
 		u32 *logical_id);
 bool is_device_discovery_supported(void);
-
+bool fastrpc_domain_needs_rsm(u32 logical_id);
 
 /*
  * Creates a sysfs interface for the given fastrpc channel context.
