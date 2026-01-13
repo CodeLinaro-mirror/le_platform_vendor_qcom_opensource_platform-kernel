@@ -163,6 +163,7 @@ register_platform_kernel_module(
 register_platform_kernel_module(
     name = "compressched_fe",
     path = COMPRESSCHED_FE_PATH,
+    config_option = "CONFIG_HYBRID_FASTRPC_COMPRESSCHED",
     default_srcs = [
         "virtio_compressched_base.c",
         "virtio_compressched_base.h",
