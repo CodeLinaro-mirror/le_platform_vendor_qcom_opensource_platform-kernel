@@ -146,6 +146,7 @@ static int virtio_ssr_probe(struct virtio_device *vdev)
 
 	vdev->priv = vssr;
 	vssr->vdev = vdev;
+	spin_lock_init(&vssr->lock);
 
 	ret = virtio_ssr_setup_vqs(vssr);
 	if (ret) {
