@@ -211,6 +211,19 @@ static void init_client_table(void)
     memset(g_vdevcompressched->client_list, 0, sizeof(g_vdevcompressched->client_list));
 }
 
+static void init_client_upid(struct virtio_compressched_dev *vdev_compressched)
+{
+  if(vdev_compressched == NULL)
+  {
+    LOG_COMPRESSCHEDFE(LEVEL_ERR, "Invalid Args passed for init_client_upid function \n");
+    return;
+  }
+  for(int i = 0; i < MAX_CLIENT; i++)
+  {
+    memset(vdev_compressched->client_list[i].upid, 0xFF, MAX_NUM_OF_NSP * sizeof(unsigned int));
+  }
+}
+
 static int virtio_compressched_probe(struct virtio_device *vdev)
 {
     struct virtio_compressched_dev *vdev_compressched = NULL;
@@ -227,18 +240,18 @@ static int virtio_compressched_probe(struct virtio_device *vdev)
 			"NSP Sharing is not enabled on the host\n");
 		return -ENODEV;
 	}
-    vdev_compressched = kzalloc(sizeof(struct virtio_compressched_dev), GFP_KERNEL);
-  	if (!vdev_compressched) {
-  		err = -ENOMEM;
-        LOG_COMPRESSCHEDFE(LEVEL_ERR, "Unable to alloc mem for device \n");
-  		return err;
-  	}
-
-    g_vdevcompressched = vdev_compressched;
-    vdev->priv = vdev_compressched;
-    vdev_compressched->vdev = vdev;
-    vdev_compressched->dev = vdev->dev.parent;
-
+  vdev_compressched = kzalloc(sizeof(struct virtio_compressched_dev), GFP_KERNEL);
+  if (!vdev_compressched) {
+    err = -ENOMEM;
+      LOG_COMPRESSCHEDFE(LEVEL_ERR, "Unable to alloc mem for device \n");
+    return err;
+  }
+  
+  g_vdevcompressched = vdev_compressched;
+  vdev->priv = vdev_compressched;
+  vdev_compressched->vdev = vdev;
+  vdev_compressched->dev = vdev->dev.parent;
+  init_client_upid(g_vdevcompressched);
  	err = init_vqs(vdev_compressched);
 	if (err) 
     {
@@ -268,13 +281,30 @@ static int virtio_compressched_probe(struct virtio_device *vdev)
 #ifdef TEST_MODE
     compressched_handle handle;
     compressched_acquire_rsp_v2 acq_response;
-    char job_name[5] = "GVM1";
+    char job_name[32] = "GVM_BASE_RES_REQ";
     unsigned int upid = 1234;
-    unsigned int tid = 1;
-    err = compressched_register(&handle,upid,tid);
+    unsigned int target_id = 1;
+    err = compressched_register(&handle,upid,target_id);
     err = compressched_acquire(handle, job_name, &acq_response);
     err = compressched_release_v2(handle, acq_response.token);
     err = compressched_unregister_v2(handle);
+    
+    
+    strscpy(job_name, "GVM_SUP_RES_REQ", sizeof(job_name));
+    job_name[sizeof(job_name) - 1] = '\0';
+
+    compressched_register_msg super_res_reg;
+    super_res_reg.nsp_count = 2;
+    super_res_reg.upid[0] = 1234;
+    super_res_reg.upid[1] = 5678;
+    super_res_reg.logical_id[0] = 16;
+    super_res_reg.logical_id[1] = 17;    
+    super_res_reg.target_id = 2;
+    err = compressched_register_v2(&handle,&super_res_reg);
+    err = compressched_acquire(handle, job_name, &acq_response);
+    err = compressched_release_v2(handle, acq_response.token);
+    err = compressched_unregister_v2(handle);
+    
 #endif
     /*************************************************/
     //virt_compressched_init_txbuf(vdev_compressched);  such function can be used to do handshake before the comm starts
