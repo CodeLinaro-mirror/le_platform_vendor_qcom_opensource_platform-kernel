@@ -6,7 +6,7 @@ ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4 gen5), true)
     BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD += $(KERNEL_MODULES_OUT)/wallpower_charger.ko
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/boot_marker.ko
 
-ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy gen5_gvm_gy gen5_gvm_sgt gen5_gvm, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)))
+ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy gen5_gvm_gy gen5_gvm_sgt gen5_gvm gen5_gvm_qmaa, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)$(TARGET_BOARD_DERIVATIVE_SUFFIX)))
 # Drivers for Metal only
 
     BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/aop-set-ddr.ko
