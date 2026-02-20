@@ -14,7 +14,7 @@
 /* Virtio ID of COMPRESSCHED : 0xC00F */
 #define VIRTIO_ID_COMPRESSCHED   0xC00F  //This should match with the VIRTIO_DT_COMPRESSCHED defined at PVM BE
 //#define TEST_MODE     1
-
+#define JOB_NAME_LENGTH 64
 extern struct virtio_compressched_dev* g_vdevcompressched;
 
 #define LEVEL_DEBUG	1
@@ -52,13 +52,12 @@ enum compressched_cmd{
 };
 
 typedef struct {
-    unsigned int upid; //unique pid sent to dsp
-    unsigned int tid; // thread id sent to dsp
+  compressched_register_msg register_msg;
 }compressched_register_tx;
 
 typedef struct {
     compressched_handle handle; // COMPRESSCHED handle
-    char* job_name;
+    char job_name[JOB_NAME_LENGTH];
 }compressched_acquire_tx;
 
 typedef struct {
@@ -95,8 +94,8 @@ struct virtio_compressched_rxbuf {
 };
 
 struct compressched_client_table {
-    unsigned int upid;
-    unsigned int tid;
+    unsigned int upid[MAX_NUM_OF_NSP];
+    unsigned int target_id;
     compressched_handle handle;
     struct completion work;
     struct virtio_compressched_rxbuf rxbuf;
