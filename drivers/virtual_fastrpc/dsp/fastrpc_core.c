@@ -1957,7 +1957,39 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 	msg = (((uint64_t)fl->upid) << 32) | ((uint64_t)fsig->signal_id);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
 	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	/**
+	 * @brief Expected Task dispatch & completion workflow via dspqueue and signals for NSP
+	 * shared between GVM and host/PVM through compute resource manager/RSM
+	 *
+	 * Sequence:
+	 * 1) HLOS enqueues a compute task into dspqueue, then sends DSPQUEUE_SIGNAL_REQ_PACKET
+	 *    to notify the DSP that new work is available.
+	 * 2) DSP receives DSPQUEUE_SIGNAL_REQ_PACKET, dequeues the task from dspqueue,
+	 *    and executes the computation.
+	 * 3) After finishing, DSP writes the result back into dspqueue, then sends
+	 *    DSPQUEUE_SIGNAL_RESP_PACKET to notify HLOS that the result is ready.
+	 * 4) HLOS receives DSPQUEUE_SIGNAL_RESP_PACKET, gets the result from dspqueue.
+	 *    This completes one full round trip.
+	 * 5) HLOS continues by enqueuing the next compute task into dspqueue and repeats.
+	 */
 	if (need_rsm) {
+		/*
+		 * Only sending DSPQUEUE_SIGNAL_REQ_PACKET requires calling
+		 * compressched_acquire(). No other signals should be sent in
+		 * this scenario (e.g., DSPQUEUE_SIGNAL_RESP_SPACE).
+		 * DSPQUEUE_SIGNAL_RESP_SPACE is used only when DSP previously
+		 * ran out of space due to continuous writes and DSP is blocked
+		 * by waiting for DSPQUEUE_SIGNAL_RESP_SPACE; after HLOS reads
+		 * and frees space, HLOS would send DSPQUEUE_SIGNAL_RESP_SPACE to
+		 * unblock DSP from above waiting and continue writing. This flow
+		 * is not valid for NSP shared between GVM and host/PVM through
+		 * compute resource manager/RSM.
+		 */
+		if (GET_SIGNAL_NO(signal_id) != DSPQUEUE_SIGNAL_REQ_PACKET) {
+			RPC_ERR("unexpected signal %u to be sent to this dsp shared through compute resource manager for PID %u",
+				GET_SIGNAL_NO(signal_id), fl->tgid);
+			return -EINVAL;
+		}
 		err = fastrpc_rsm_acquire(fl, fl->upid);
 		if (err)
 			return err;
@@ -2047,8 +2079,27 @@ static int fastrpc_dspsignal_wait(struct fastrpc_user *fl,
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
 	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
-	if (need_rsm)
+	/* refer to above workflow */
+	if (need_rsm) {
+		/*
+		 * Only recieving DSPQUEUE_SIGNAL_RESP_PACKET requires calling
+		 * compressched_release(). No other signals should be sent in
+		 * this scenario (e.g., DSPQUEUE_SIGNAL_REQ_SPACE).
+		 * DSPQUEUE_SIGNAL_REQ_SPACE is used only when HLOS previously
+		 * ran out of space due to continuous writes and HLOS is blocked
+		 * by waiting for DSPQUEUE_SIGNAL_REQ_SPACE; after DSP reads and
+		 * frees space, DSP would send DSPQUEUE_SIGNAL_REQ_SPACE to unblock
+		 * HLOS from above waiting and continue writing. This flow is not
+		 * valid for NSP shared between GVM and host/PVM through compute
+		 * resource manager/RSM.
+		 */
+		if(GET_SIGNAL_NO(signal_id) != DSPQUEUE_SIGNAL_RESP_PACKET) {
+			RPC_ERR("unexpected signal %u received from this dsp shared through compute resource manager for PID %u",
+				GET_SIGNAL_NO(signal_id), fl->tgid);
+			return -EINVAL;
+		}
 		fastrpc_rsm_release(fl, fl->upid);
+	}
 #endif
 	return err;
 }

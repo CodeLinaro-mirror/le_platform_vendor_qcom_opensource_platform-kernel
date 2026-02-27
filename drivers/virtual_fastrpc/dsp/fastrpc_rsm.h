@@ -7,6 +7,9 @@
 
 #include "fastrpc_common.h"
 
+/* Need corresponding update here if this definition changes in dspsignal.h */
+#define DSPSIGNAL_DSPQUEUE_MIN 0
+
 /* Need corresponding update here if the signal enum definition changes in dspsignal.h */
 enum dspqueue_signal {
     DSPQUEUE_SIGNAL_REQ_PACKET = 0,
@@ -15,6 +18,8 @@ enum dspqueue_signal {
     DSPQUEUE_SIGNAL_RESP_SPACE,
     DSPQUEUE_NUM_SIGNALS
 };
+
+#define GET_SIGNAL_NO(signal_id) ((signal_id - DSPSIGNAL_DSPQUEUE_MIN) % DSPQUEUE_NUM_SIGNALS)
 
 /* When it is rsm + dspqueue use case, this struct will be used */
 typedef struct {
