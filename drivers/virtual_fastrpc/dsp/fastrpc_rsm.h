@@ -32,6 +32,10 @@ typedef struct {
 
 void fastrpc_rsm_list_per_session_free(struct fastrpc_user *fl);
 int fastrpc_rsm_acquire(struct fastrpc_user *fl, unsigned int target_id);
-void fastrpc_rsm_release(struct fastrpc_user *fl, unsigned int target_id);
+void fastrpc_rsm_release(struct fastrpc_user *fl, unsigned int target_id, enum fastrpc_rsm_node_type type);
+bool fastrpc_multidomain_ctx_needs_rsm(struct fastrpc_user *fl, unsigned int ctx);
+int fastrpc_multidomain_rsm_register(struct fastrpc_user *fl, struct fastrpc_mdctx_info *mdctx);
+int fastrpc_multidomain_rsm_acquire(struct fastrpc_user *fl, unsigned int target_id);
+void fastrpc_multidomain_rsm_release(struct fastrpc_user *fl, unsigned int target_id);
 
 #endif /*__FASTRPC_RSM_H__*/
