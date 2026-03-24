@@ -368,6 +368,7 @@ module_init(virtio_compressched_init);
 module_exit(virtio_compressched_exit);
 
 EXPORT_SYMBOL_GPL(compressched_register);
+EXPORT_SYMBOL_GPL(compressched_register_v2);
 EXPORT_SYMBOL_GPL(compressched_acquire);
 EXPORT_SYMBOL_GPL(compressched_release_v2);
 EXPORT_SYMBOL_GPL(compressched_unregister_v2);
