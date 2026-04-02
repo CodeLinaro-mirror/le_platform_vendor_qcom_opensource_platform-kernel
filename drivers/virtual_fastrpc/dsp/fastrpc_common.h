@@ -545,6 +545,7 @@ struct vfastrpc_rsm_entry {
 	 * which will be used to call compressched_release_v2
 	 */
 	compressched_acquire_rsp_v2 response;
+	compressched_register_msg reg_msg;
 };
 #endif
 

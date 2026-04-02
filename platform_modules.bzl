@@ -190,16 +190,16 @@ register_platform_kernel_module(
         "fastrpc_vq.h",
     ],
     config_srcs = {
-        "CONFIG_HYBRID_FASTRPC_RSM": [
+        "CONFIG_HYBRID_FASTRPC_COMPRESSCHED": [
             "fastrpc_rsm.c",
             "fastrpc_rsm.h",
          ],
     },
     deps = [":fastrpc_local_headers"],
     config_deps = {
-        "CONFIG_HYBRID_FASTRPC_RSM": [":%b_compressched_fe"],
+        "CONFIG_HYBRID_FASTRPC_COMPRESSCHED": [":%b_compressched_fe"],
     },
     config_copts = {
-        "CONFIG_HYBRID_FASTRPC_RSM": ["-DCONFIG_HYBRID_FASTRPC_RSM=1"],
+        "CONFIG_HYBRID_FASTRPC_COMPRESSCHED": ["-DCONFIG_HYBRID_FASTRPC_RSM=1"],
     },
 )
