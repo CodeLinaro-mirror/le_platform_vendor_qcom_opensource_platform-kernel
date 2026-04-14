@@ -75,6 +75,7 @@ def define_target_variant_modules(target, variant, modules, extra_options = [], 
         "//build/kernel/kleaf:socrepo_true": [
             "//soc-repo:all_headers",
             "//soc-repo:{}/drivers/remoteproc/rproc_qcom_common".format(kernel_build_variant),
+	     "//soc-repo:{}/drivers/misc/bootmarker_proxy".format(kernel_build_variant),
         ],
 	"//build/kernel/kleaf:socrepo_false": ["//msm-kernel:all_headers"],
     })
