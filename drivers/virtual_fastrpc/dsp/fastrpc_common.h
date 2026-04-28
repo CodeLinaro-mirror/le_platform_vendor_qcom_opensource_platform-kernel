@@ -186,6 +186,12 @@ enum fastrpc_dspsignal_state {
 	DSPSIGNAL_STATE_CANCELED,
 };
 
+enum fastrpc_rsm_node_type {
+    FASTRPC_RSM_SIGNAL_CORE = 0,
+    FASTRPC_RSM_MULTI_CORE,
+    FASTRPC_RSM_TYPE_NUM
+};
+
 struct fastrpc_internal_dspsignal {
 	u32 req;
 	u32 signal_id;
@@ -193,6 +199,16 @@ struct fastrpc_internal_dspsignal {
 		u32 flags;
 		u32 timeout_usec;
 	};
+};
+
+struct fastrpc_internal_dspsignal_mc {
+	u32 req;
+	u32 signal_id;
+	union {
+		u32 flags;
+		u32 timeout_usec;
+	};
+	u64 ctx;
 };
 
 struct fastrpc_dspsignal {
@@ -473,6 +489,10 @@ struct fastrpc_mdctx_info {
 	uint32_t num_domains;
 	/* User-obj using which context was created */
 	struct fastrpc_user *fl;
+	/* User-objs of all domains in this multi-domain */
+	struct fastrpc_user **fls;
+	/* List of upids on each domain */
+	uint32_t *upids;
 	/* Kernel generated context id */
 	uint64_t ctx;
 };
@@ -522,6 +542,9 @@ struct virt_fastrpc_vq {
 struct vfastrpc_rsm_entry {
 	struct hlist_node hn;
 	struct kref refcount;
+	atomic_t dspqueue_req_cnt;
+	atomic_t dspqueue_rsp_cnt;
+	enum fastrpc_rsm_node_type type;
 	/*
 	 * thread id or unique fastrpc pid (upid)
 	 * In normal invoke case, it will be thread id (gotten

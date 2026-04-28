@@ -25,13 +25,12 @@ static void fastrpc_rsm_entry_free(struct kref *ref)
 		return;
 
 	err = compressched_unregister_v2(rsm_entry->handle);
-	if (err) {
+	if (err)
 		RPC_ERR("compressched_unregister_v2 err %d, target_id %u, handle %x\n",
 					err, rsm_entry->target_id, rsm_entry->handle);
-	} else {
+	else
 		RPC_DBG("compressched_unregister_v2 complete, target_id %u, handle %x\n",
 					rsm_entry->target_id, rsm_entry->handle);
-	}
 	kfree(rsm_entry);
 }
 
@@ -51,14 +50,15 @@ static void fastrpc_rsm_entry_put(struct vfastrpc_rsm_entry *rsm_entry)
 
 int fastrpc_rsm_entry_find(struct fastrpc_user *fl,
 				struct vfastrpc_rsm_entry **pprsm_entry,
-				unsigned int target_id)
+				unsigned int target_id,
+				enum fastrpc_rsm_node_type type)
 {
 	struct vfastrpc_rsm_entry *match = NULL, *rsm_entry = NULL;
 	struct hlist_node *n;
 
 	mutex_lock(&fl->rsm_list_mutex);
 	hlist_for_each_entry_safe(rsm_entry, n, &fl->rsm_list_per_session, hn) {
-		if (rsm_entry->target_id == target_id) {
+		if (rsm_entry->target_id == target_id && rsm_entry->type == type) {
 			if(fastrpc_rsm_entry_get(rsm_entry))
 				continue;
 
@@ -107,16 +107,31 @@ void fastrpc_rsm_list_per_session_free(struct fastrpc_user *fl)
 		}
 		mutex_unlock(&fl->rsm_list_mutex);
 		/*
-		 * Pd is closed. RSM can beunregistered safely.
+		 * Pd is closed. RSM can be unregistered safely.
 		 * After the rsm_unregister_batch function is implemented,
 		 * this rsm_unregister_v2 will be removed.
 		 */
 		if (rsm_entry_free)
-		{
-			compressched_unregister_v2(rsm_entry_free->handle);
 			fastrpc_rsm_entry_put(rsm_entry_free);
-		}
 	} while (rsm_entry_free);
+}
+
+bool fastrpc_multidomain_ctx_needs_rsm(struct fastrpc_user *fl, unsigned int ctx)
+{
+	struct vfastrpc_rsm_entry *rsm_entry = NULL;
+	struct hlist_node *n;
+	bool need_rsm = false;
+
+	mutex_lock(&fl->rsm_list_mutex);
+	hlist_for_each_entry_safe(rsm_entry, n, &fl->rsm_list_per_session, hn) {
+		if (rsm_entry->target_id == ctx && rsm_entry->type == FASTRPC_RSM_MULTI_CORE) {
+			need_rsm = true;
+			break;
+		}
+	}
+	mutex_unlock(&fl->rsm_list_mutex);
+
+	return need_rsm;
 }
 
 int fastrpc_rsm_entry_create(struct fastrpc_user *fl,
@@ -124,20 +139,23 @@ int fastrpc_rsm_entry_create(struct fastrpc_user *fl,
 				unsigned int target_id)
 {
 	struct vfastrpc_rsm_entry *rsm_entry = NULL;
+	compressched_register_msg *reg_msg = NULL;
 	int err = 0;
 	compressched_handle handle = -1;
 
-	if (!fastrpc_rsm_entry_find(fl, pprsm_entry, target_id))
+	if (!fastrpc_rsm_entry_find(fl, pprsm_entry, target_id, FASTRPC_RSM_SIGNAL_CORE))
 		return 0;
 
 	rsm_entry = kzalloc(sizeof(*rsm_entry), GFP_KERNEL);
 	if (!rsm_entry)
 		goto bail;
 
-	rsm_entry->reg_msg.nsp_count = 1;
-	rsm_entry->reg_msg.target_id = target_id;
-	rsm_entry->reg_msg.upid[0] = fl->upid;
-	rsm_entry->reg_msg.logical_id[0] = fl->cctx->domain->id;
+	reg_msg = &rsm_entry->reg_msg;
+
+	reg_msg->nsp_count = 1;
+	reg_msg->target_id = target_id;
+	reg_msg->upid[0] = fl->upid;
+	reg_msg->logical_id[0] = fl->cctx->domain->id;
 
 	err = compressched_register_v2(&handle, &rsm_entry->reg_msg);
 	if (err) {
@@ -154,12 +172,70 @@ int fastrpc_rsm_entry_create(struct fastrpc_user *fl,
 	rsm_entry->target_id = target_id;
 	rsm_entry->handle = handle;
 	rsm_entry->response.token = -1;
+	rsm_entry->type = FASTRPC_RSM_SIGNAL_CORE;
 
 	fastrpc_rsm_entry_add(fl, rsm_entry);
 	*pprsm_entry = rsm_entry;
 bail:
 	if (err)
 		kfree(rsm_entry);
+	return err;
+}
+
+int fastrpc_multidomain_rsm_register(struct fastrpc_user *fl,
+				struct fastrpc_mdctx_info *mdctx)
+{
+	int err = 0, ii = 0;
+	compressched_handle handle = -1;
+	compressched_register_msg *reg_msg = NULL;
+	struct vfastrpc_rsm_entry *rsm_entry = NULL;
+
+	if (mdctx->num_domains > MAX_NUM_OF_NSP) {
+		RPC_ERR("num_domains %u is invalid > %d\n", mdctx->num_domains, MAX_NUM_OF_NSP);
+		goto bail;
+	}
+
+	rsm_entry = kzalloc(sizeof(*rsm_entry), GFP_KERNEL);
+	if (!rsm_entry)
+		goto bail;
+
+	reg_msg = &rsm_entry->reg_msg;
+
+	reg_msg->nsp_count = mdctx->num_domains;
+	reg_msg->target_id = mdctx->ctx;
+	for (ii = 0; ii < mdctx->num_domains; ii++) {
+		reg_msg->upid[ii] = mdctx->upids[ii];
+		reg_msg->logical_id[ii] = mdctx->domains[ii];
+	}
+
+	err = compressched_register_v2(&handle, reg_msg);
+	if (err) {
+		RPC_ERR("compressched_register_v2 err %d, target_id %llu, handle %x\n",
+						err, mdctx->ctx, handle);
+		goto bail;
+	} else {
+		RPC_DBG("compressched_register_v2 complete, target_id %llu, handle %x\n",
+						mdctx->ctx, handle);
+	}
+
+	INIT_HLIST_NODE(&rsm_entry->hn);
+	kref_init(&rsm_entry->refcount);
+	atomic_set(&rsm_entry->dspqueue_req_cnt, 0);
+	atomic_set(&rsm_entry->dspqueue_rsp_cnt, 0);
+	rsm_entry->target_id = mdctx->ctx;
+	rsm_entry->handle = handle;
+	rsm_entry->response.token = -1;
+	rsm_entry->type = FASTRPC_RSM_MULTI_CORE;
+
+	for (ii = 0; ii < mdctx->num_domains; ii++) {
+		fastrpc_rsm_entry_add(mdctx->fls[ii], rsm_entry);
+	}
+
+	fastrpc_rsm_entry_put(rsm_entry);
+bail:
+	if (err) {
+		kfree(rsm_entry);
+	}
 	return err;
 }
 
@@ -172,32 +248,90 @@ int fastrpc_rsm_acquire(struct fastrpc_user *fl, unsigned int target_id)
 		goto bail;
 
 	err = compressched_acquire(rsm_entry->handle, current->comm, &rsm_entry->response);
-	if (err) {
+	if (err)
 		RPC_ERR("compressched_acquire err %d, handle %x, token %x\n",
 						err, rsm_entry->handle, rsm_entry->response.token);
-	} else {
+	else
 		RPC_DBG("compressched_acquire complete, handle %x, token %x\n",
 						rsm_entry->handle, rsm_entry->response.token);
-	}
-bail:
 	fastrpc_rsm_entry_put(rsm_entry);
+bail:
 	return err;
 }
 
-void fastrpc_rsm_release(struct fastrpc_user *fl, unsigned int target_id)
+void fastrpc_rsm_release(struct fastrpc_user *fl, unsigned int target_id, enum fastrpc_rsm_node_type type)
+{
+	int err = 0;
+	struct vfastrpc_rsm_entry *rsm_entry = NULL;
+	if (fastrpc_rsm_entry_find(fl, &rsm_entry, target_id, type))
+		return;
+
+	err = compressched_release_v2(rsm_entry->handle, rsm_entry->response.token);
+	if (err)
+		RPC_ERR("compressched_release_v2 err %d, handle %x\n", err, rsm_entry->handle);
+	else
+		RPC_DBG("compressched_release_v2 complete, handle %x\n", rsm_entry->handle);
+
+	fastrpc_rsm_entry_put(rsm_entry);
+}
+
+int fastrpc_multidomain_rsm_acquire(struct fastrpc_user *fl, unsigned int target_id)
 {
 	int err = 0;
 	struct vfastrpc_rsm_entry *rsm_entry = NULL;
 
-	if (fastrpc_rsm_entry_find(fl, &rsm_entry, target_id))
+	if (fastrpc_rsm_entry_find(fl, &rsm_entry, target_id, FASTRPC_RSM_MULTI_CORE))
+		return 0;
+
+	/*
+	 * req_cnt: Number of requests sent from HLOS to DSP.
+	 * rsp_cnt: Number of responses received from DSP.
+	 *
+	 * AOU (limitation):
+	 * For multi-core scenarios, each DSP is required to respond
+	 * to HLOS for every request. The response is used to ensure request
+	 * completion and global synchronization.
+	 */
+	if (atomic_read(&rsm_entry->dspqueue_req_cnt) != 0) {
+		atomic_add(1, &rsm_entry->dspqueue_req_cnt);
+		goto out;
+	}
+	err = compressched_acquire(rsm_entry->handle, current->comm, &rsm_entry->response);
+	if (err) {
+		RPC_ERR("compressched_acquire err %d, handle %x, logic id %u, upid %u, target_id %u\n",
+						err, rsm_entry->handle, fl->cctx->domain->id, fl->upid, target_id);
+	} else {
+		atomic_add(1, &rsm_entry->dspqueue_req_cnt);
+		RPC_DBG("compressched_acquire complete, handle %x\n", rsm_entry->handle);
+	}
+
+out:
+	fastrpc_rsm_entry_put(rsm_entry);
+	return err;
+}
+
+void fastrpc_multidomain_rsm_release(struct fastrpc_user *fl, unsigned int target_id)
+{
+	int err = 0;
+	struct vfastrpc_rsm_entry *rsm_entry = NULL;
+	if (fastrpc_rsm_entry_find(fl, &rsm_entry, target_id, FASTRPC_RSM_MULTI_CORE))
 		return;
+
+	atomic_add(1, &rsm_entry->dspqueue_rsp_cnt);
+	if ((atomic_read(&rsm_entry->dspqueue_req_cnt) != rsm_entry->reg_msg.nsp_count) ||
+		(atomic_read(&rsm_entry->dspqueue_rsp_cnt) != rsm_entry->reg_msg.nsp_count)) {
+		goto out;
+	}
 
 	err = compressched_release_v2(rsm_entry->handle, rsm_entry->response.token);
 	if (err) {
 		RPC_ERR("compressched_release_v2 err %d, handle %x\n", err, rsm_entry->handle);
 	} else {
+		atomic_set(&rsm_entry->dspqueue_req_cnt, 0);
+		atomic_set(&rsm_entry->dspqueue_rsp_cnt, 0);
 		RPC_DBG("compressched_release_v2 complete, handle %x\n", rsm_entry->handle);
 	}
 
+out:
 	fastrpc_rsm_entry_put(rsm_entry);
 }
