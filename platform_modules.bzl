@@ -168,7 +168,10 @@ register_platform_kernel_module(
         "virtio_compressched_base.c",
         "virtio_compressched_base.h",
         "virtio_compressched_client.c",
-        "virtio_compressched_client.h"
+        "virtio_compressched_client.h",
+        "compressched_fe_cdev.c",
+        "uapi/compressched_fe_ioctl.h",
+        "uapi/compressched_fe_dp_ioctl.h",
     ],
 )
 
