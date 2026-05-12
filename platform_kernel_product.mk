@@ -4,7 +4,7 @@ ifeq ($(call is-board-platform-in-list, $(MSMSTEPPE) msmnile gen4 gen5), true)
     PRODUCT_PACKAGES += wallpower_charger.ko
     PRODUCT_PACKAGES += boot_marker.ko
 
-ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy gen4_gvm_gy_qmaa gen5_gvm_gy gen5_gvm_sgt gen5_gvm gen5_gvm_qmaa, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)$(TARGET_BOARD_DERIVATIVE_SUFFIX)))
+ifeq (,$(filter msmnile_gvmq gen4_gvm gen4_hgy gen4_gvm_gy gen4_gvm_gy_qmaa gen5_gvm_gy gen5_gvm_sgt gen5_gvm gen5_gvm_cmu gen5_gvm_qmaa, $(TARGET_BOARD_PLATFORM)$(TARGET_BOARD_SUFFIX)$(TARGET_BOARD_DERIVATIVE_SUFFIX)))
 # Drivers for Metal only
     PRODUCT_PACKAGES += aop-set-ddr.ko
     PRODUCT_PACKAGES += silent_boot.ko
