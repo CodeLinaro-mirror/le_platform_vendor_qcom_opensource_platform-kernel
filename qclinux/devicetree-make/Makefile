@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 dtb-y += sa8797p-gunyah-vm-lv-qam.dtb
+dtb-y += sa8797p-v2-gunyah-vm-lv-qam.dtb
 dtb-y += sa8797p-gunyah-vm-lv-qam-overlay.dtbo
 
 KBUILD_OPTIONS += KBUILD_EXTMOD_DTS=.
