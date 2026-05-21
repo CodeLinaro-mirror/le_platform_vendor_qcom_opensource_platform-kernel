@@ -286,6 +286,7 @@ struct vfastrpc_invoke_ctx {
 	struct fastrpc_async_job asyncjob;
 	/* Unique sequence num inside a process to identify the invoke msg. */
 	s64 seq_num;
+	struct timespec64 invoke_start_time;  /* submission timestamp for async perf */
 };
 
 struct virt_msg_hdr {
