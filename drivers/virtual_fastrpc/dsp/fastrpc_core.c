@@ -3104,7 +3104,9 @@ int fastrpc_multimode_invoke(struct fastrpc_user *fl, char __user *argp)
 	struct fastrpc_ioctl_multimode_invoke invoke;
 	struct fastrpc_internal_control cp = {0};
 	struct fastrpc_internal_dspsignal *fsig = NULL;
+#if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
 	struct fastrpc_internal_dspsignal_mc *fmcsig = NULL;
+#endif
 	struct fastrpc_internal_notif_rsp notif;
 	struct fastrpc_internal_sessinfo sessinfo;
 	struct fastrpc_ioctl_mdctx_manage ctxm = {0};
