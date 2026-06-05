@@ -142,7 +142,8 @@ static int __init vm_cpufreq_module_init(void)
 	if (ret)
 		return ret;
 
-	if (of_machine_is_compatible("qcom,quinvm")) {
+	if (of_machine_is_compatible("qcom,quinvm") ||
+	    of_machine_is_compatible("qcom,qam")) {
 		vm_cpufreq_pdev = platform_device_register_simple("cpufreq-vm",
 				-1, NULL, 0);
 		if (IS_ERR(vm_cpufreq_pdev)) {
