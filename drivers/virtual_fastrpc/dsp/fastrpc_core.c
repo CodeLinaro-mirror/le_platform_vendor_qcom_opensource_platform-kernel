@@ -2102,6 +2102,12 @@ static int fastrpc_dspsignal_wait(struct fastrpc_user *fl,
 		if ((s->state == DSPSIGNAL_STATE_CANCELED) ||
 				(s->state == DSPSIGNAL_STATE_UNUSED))
 			err = -EINTR;
+		if (s->state == DSPSIGNAL_STATE_SIGNALED) {
+			/* Signal already received from DSP. Reset signal state and return */
+			s->state = DSPSIGNAL_STATE_PENDING;
+			reinit_completion(&s->comp);
+		}
+
 		spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
 		DSPSIGNAL_VERBOSE("signal %u in state %u, complete wait immediately",
 				signal_id, s->state);
