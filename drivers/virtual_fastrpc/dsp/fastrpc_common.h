@@ -329,9 +329,24 @@ struct fastrpc_invoke_ctx {
 
 struct fastrpc_domain;
 
+/*
+ * struct fastrpc_channel_ctx - Per-rpmsg-channel state.
+ *
+ * Allocated by fastrpc_rpmsg_probe() (kzalloc) with @refcount
+ * initialised to 1 for the rpmsg driver. Each fastrpc_user takes
+ * an extra ref via fastrpc_channel_ctx_get() at open and drops it
+ * via fastrpc_channel_ctx_put() at release; fastrpc_rpmsg_remove()
+ * drops the rpmsg driver's ref. Freed by fastrpc_channel_ctx_free()
+ * (the kref release callback) when the last ref goes away.
+ */
 struct fastrpc_channel_ctx {
 	struct fastrpc_common *gdriver;
 	int domain_id;
+	/* Cached domain->type, populated together with domain_id at bind
+	 * time. Lets readers access the DSP type via fl->cctx directly
+	 * so cctx->domain can be torn down at SSR without racing them.
+	 */
+	enum fastrpc_dsp_type domain_type;
 /* Structure holding info on domain associated with channel */
 	struct fastrpc_domain *domain;
 	struct rpmsg_device *rpdev;
@@ -362,6 +377,18 @@ struct fastrpc_channel_ctx {
 	atomic_t invoke_cnt;
 };
 
+/*
+ * struct fastrpc_domain - Description of a DSP domain. No refcount.
+ *
+ * Non-discovery mode:
+ *   Allocated in fastrpc_rpmsg_probe() (kzalloc) and owned by the
+ *   bound cctx. Freed by fastrpc_rpmsg_remove().
+ *
+ * Discovery mode (is_device_discovery_supported() == true):
+ *   Populated from device-tree into a global hash-table keyed by
+ *   @phy_id; survives across SSR / rpmsg_remove / rpmsg_probe.
+ *   fastrpc_rpmsg_remove() only clears the @cctx back-pointer.
+ */
 struct fastrpc_domain {
 	/* Node for adding to global domains hash-table */
 	struct hlist_node node;
