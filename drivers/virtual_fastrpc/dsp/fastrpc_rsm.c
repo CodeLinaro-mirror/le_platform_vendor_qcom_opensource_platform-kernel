@@ -155,16 +155,16 @@ int fastrpc_rsm_entry_create(struct fastrpc_user *fl,
 	reg_msg->nsp_count = 1;
 	reg_msg->target_id = target_id;
 	reg_msg->upid[0] = fl->upid;
-	reg_msg->logical_id[0] = fl->cctx->domain->id;
+	reg_msg->logical_id[0] = fl->cctx->domain_id;
 
 	err = compressched_register_v2(&handle, &rsm_entry->reg_msg);
 	if (err) {
 		RPC_ERR("compressched_register_v2 err single core %d, target_id %u, handle %x, upid %u, logical_id %d\n",
-						err, target_id, handle, fl->upid, fl->cctx->domain->id);
+						err, target_id, handle, fl->upid, fl->cctx->domain_id);
 		goto bail;
 	} else {
 		RPC_DBG("compressched_register_v2 single core complete, target_id %u, handle %x, upid %u, logical_id %d\n",
-						target_id, handle, fl->upid, fl->cctx->domain->id);
+						target_id, handle, fl->upid, fl->cctx->domain_id);
 	}
 
 	INIT_HLIST_NODE(&rsm_entry->hn);
@@ -299,7 +299,7 @@ int fastrpc_multidomain_rsm_acquire(struct fastrpc_user *fl, unsigned int target
 	err = compressched_acquire(rsm_entry->handle, current->comm, &rsm_entry->response);
 	if (err) {
 		RPC_ERR("compressched_acquire err %d, handle %x, logic id %u, upid %u, target_id %u\n",
-						err, rsm_entry->handle, fl->cctx->domain->id, fl->upid, target_id);
+						err, rsm_entry->handle, fl->cctx->domain_id, fl->upid, target_id);
 	} else {
 		atomic_add(1, &rsm_entry->dspqueue_req_cnt);
 		RPC_DBG("compressched_acquire complete, handle %x\n", rsm_entry->handle);

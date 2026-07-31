@@ -1108,8 +1108,8 @@ int fastrpc_init_create_process(struct fastrpc_user *fl, char __user *argp)
 	if (err)
 		return err;
 
-	if (fl->cctx->domain->type == FASTRPC_NSP ||
-			fl->cctx->domain->type == FASTRPC_HPASS)
+	if (fl->cctx->domain_type == FASTRPC_NSP ||
+			fl->cctx->domain_type == FASTRPC_HPASS)
 		fastrpc_create_persistent_headers(fl);
 #ifdef CONFIG_DEBUG_FS
 	fastrpc_create_session_debugfs(fl);
@@ -1817,7 +1817,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl, u32 kernel,
 	dma_wmb();
 
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
-	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain_id);
 	/*
 	 * static handles are directly used by fastRPC itself rather than its client,
 	 * and also it will not use those special DSP resource (e.g., VTCM) we need to
@@ -1842,7 +1842,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl, u32 kernel,
 wait:
 	if (fl->poll_mode &&
 		handle > FASTRPC_MAX_STATIC_HANDLE &&
-		fl->cctx->domain->type == FASTRPC_NSP &&
+		fl->cctx->domain_type == FASTRPC_NSP &&
 		fl->pd_type == DYNAMIC_PD)
 		ctx->rsp_flags = POLL_MODE;
 
@@ -1969,7 +1969,7 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 
 	msg = (((uint64_t)fl->upid) << 32) | ((uint64_t)fsig->signal_id);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
-	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain_id);
 	/**
 	 * @brief Expected Task dispatch & completion workflow via dspqueue and signals for NSP
 	 * shared between GVM and host/PVM through compute resource manager/RSM
@@ -2138,7 +2138,7 @@ static int fastrpc_dspsignal_wait(struct fastrpc_user *fl,
 	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
-	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain->id);
+	need_rsm = fastrpc_domain_needs_rsm(fl->cctx->domain_id);
 	/* refer to above workflow */
 	if (need_rsm) {
 		/*
