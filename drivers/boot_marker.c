@@ -519,7 +519,9 @@ static int mpm_parse_dt(void)
 				"qcom,mpm2-sleep-counter");
 	if (!np_mpm2) {
 		pr_err("mpm_counter: can't find DT node\n");
-		goto err1;
+		mpm_counter_base = NULL;
+		mpm_counter_freq = 0;
+		goto err2;
 	}
 
 	if (of_property_read_u32(np_mpm2, "clock-frequency", &mpm_counter_freq))
@@ -536,12 +538,14 @@ static int mpm_parse_dt(void)
 err2:
 	of_node_put(np_mpm2);
 	return 0;
-err1:
-	return -ENODEV;
 }
 
 static void print_boot_marker(void)
 {
+	if (!mpm_counter_base) {
+		pr_warn("boot_marker: MPM counter base not available, skipping\n");
+		return;
+	}
 	pr_info("KPI: Kernel MPM timestamp = %u\n",
 		readl_relaxed(mpm_counter_base));
 	pr_info("KPI: Kernel MPM Clock frequency = %u\n",

@@ -153,6 +153,9 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 			return err;
 		}
 
+		/* Allocate a fastrpc_domain instance as well for non-discovery case,
+		 * even though not to populate the sysfs, to reuse the same code with
+		 * device discovery case. */
 		domain = kzalloc(sizeof(struct fastrpc_domain), GFP_KERNEL);
 		if (!domain)
 			return -ENOMEM;
@@ -196,6 +199,7 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	idr_init(&data->ctx_idr);
 	ida_init(&data->tgid_frpc_ida);
 	data->domain_id = domain->id;
+	data->domain_type = domain->type;
 	data->max_sess_per_proc = FASTRPC_MAX_SESSIONS_PER_PROCESS;
 	data->rpdev = rpdev;
 	data->domain = domain;
