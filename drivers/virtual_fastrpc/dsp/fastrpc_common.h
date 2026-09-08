@@ -20,6 +20,8 @@
 #include <linux/wait.h>
 #include <linux/kobject.h>
 #include <linux/hashtable.h>
+#include <linux/kref.h>
+#include <linux/workqueue.h>
 #include "fastrpc.h"
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
 #include "virtio_compressched_client.h"
@@ -495,6 +497,9 @@ struct fastrpc_user {
 	bool untrusted_process;
 	bool set_session_info;
 	enum fastrpc_process_state state;
+
+	struct kref refcount;
+	struct work_struct put_work;
 };
 
 /*
@@ -758,5 +763,8 @@ int fastrpc_sysfs_register_kset(void);
  * @return: None
  */
 void fastrpc_sysfs_deregister_kset(void);
+
+int fastrpc_file_get(struct fastrpc_user *fl);
+void fastrpc_file_put(struct fastrpc_user *fl, bool worker);
 
 #endif /*__FASTRPC_COMMON_H__*/

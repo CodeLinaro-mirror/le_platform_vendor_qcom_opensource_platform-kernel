@@ -283,6 +283,8 @@ struct virt_mdctx_manage_msg {
 	s32 cid[];
 } __packed;
 
+static void fastrpc_user_release(struct kref *ref);
+
 static int fastrpc_mem_map_to_dsp(struct fastrpc_user *fl, int fd, int offset,
 					u32 flags, u32 va, u64 da,
 					size_t size, uintptr_t *raddr);
@@ -360,6 +362,53 @@ void fastrpc_channel_update_invoke_cnt(
 	} else {
 		atomic_dec(&cctx->invoke_cnt);
 	}
+}
+
+int fastrpc_file_get(struct fastrpc_user *fl)
+{
+	return kref_get_unless_zero(&fl->refcount) ? 0 : -ENOENT;
+}
+
+void fastrpc_file_put(struct fastrpc_user *fl, bool worker)
+{
+	/*
+	 * worker=true is used when called from interrupt context (e.g.
+	 * fastrpc_rpmsg_callback). If the refcount would drop to zero here,
+	 * the release function fastrpc_user_release must not be invoked
+	 * directly from interrupt context as it performs cleanup that
+	 * requires process context. Schedule a worker instead.
+	 */
+	if (worker) {
+		struct kref *kref = &fl->refcount;
+		u32 old, new, val = atomic_read(&kref->refcount.refs);
+
+		if (val > 1 && likely(val != UINT_MAX)) {
+			for (;;) {
+				new = val - 1;
+				if (val == 1)
+					goto schedule_work;
+				old = atomic_cmpxchg_release(&kref->refcount.refs, val, new);
+				if (old == val)
+					break;
+				val = old;
+			}
+		} else if (val == 1) {
+			goto schedule_work;
+		}
+	} else {
+		kref_put(&fl->refcount, fastrpc_user_release);
+	}
+	return;
+schedule_work:
+	schedule_work(&fl->put_work);
+}
+
+static void fastrpc_file_put_worker(struct work_struct *work)
+{
+	struct fastrpc_user *fl =
+			container_of(work, struct fastrpc_user, put_work);
+
+	fastrpc_file_put(fl, false);
 }
 
 static void fastrpc_context_free(struct kref *ref)
@@ -492,6 +541,7 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 	struct fastrpc_user *fl ;
 	unsigned long irq_flags = 0;
 	bool process_found = false;
+	int err;
 
 	DSPSIGNAL_VERBOSE("received queue signal %llx: PID %u, signal %u\n",
 			msg, pid, signal_id);
@@ -502,6 +552,11 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 	spin_lock_irqsave(&cctx->lock, irq_flags);
 	list_for_each_entry(fl, &cctx->users, user) {
 		if (fl->upid == pid && fl->state < DSP_EXIT_START) {
+			err = fastrpc_file_get(fl);
+			if (err) {
+				RPC_WARN("user-obj for fl (%pK) being released\n", fl);
+				break;
+			}
 			process_found = true;
 			break;
 		}
@@ -533,6 +588,7 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 				signal_id, pid);
 	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
+	fastrpc_file_put(fl, true);
 
 	return;
 }
@@ -566,10 +622,16 @@ static void fastrpc_notif_find_process(int domain,
 	bool is_process_found = false;
 	unsigned long irq_flags = 0;
 	struct fastrpc_user *user;
+	int err;
 
 	spin_lock_irqsave(&cctx->lock, irq_flags);
 	list_for_each_entry(user, &cctx->users, user) {
 		if (user->upid == notif->pid) {
+			err = fastrpc_file_get(user);
+			if (err) {
+				RPC_WARN("user-obj for fl (%pK) being released\n", user);
+				break;
+			}
 			is_process_found = true;
 			break;
 		}
@@ -581,6 +643,7 @@ static void fastrpc_notif_find_process(int domain,
 		return;
 	}
 	fastrpc_queue_pd_status(user, domain, notif->status, user->sessionid);
+	fastrpc_file_put(user, true);
 }
 
 void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
@@ -980,10 +1043,15 @@ static int fastrpc_debugfs_show(struct seq_file *s_file, void *data)
 	struct fastrpc_channel_ctx *ctx;
 	struct fastrpc_invoke_ctx *ictx, *m;
 	struct fastrpc_buf *buf, *n;
-	int i;
+	int i, ret;
 	unsigned long irq_flags = 0;
 
 	if (fl != NULL) {
+		ret = fastrpc_file_get(fl);
+		if (ret)
+			/* User object being released as ref-count is already 0 */
+			return 0;
+
 		seq_printf(s_file, "%s %12s %d\n", "tgid", ":", fl->tgid);
 		seq_printf(s_file, "%s %7s %d\n", "tgid_frpc", ":", fl->tgid_frpc);
 		seq_printf(s_file, "%s %3s %d\n", "is_secure_dev", ":", fl->is_secure_dev);
@@ -1032,6 +1100,7 @@ static int fastrpc_debugfs_show(struct seq_file *s_file, void *data)
 				print_ictx_info(s_file, ictx);
 		}
 		spin_unlock(&fl->lock);
+		fastrpc_file_put(fl, false);
 	}
 	return 0;
 }
@@ -3698,6 +3767,8 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 	INIT_LIST_HEAD(&fl->cached_bufs);
 	INIT_LIST_HEAD(&fl->notif_queue);
 	INIT_LIST_HEAD(&fl->mdctxs);
+	kref_init(&fl->refcount);
+	INIT_WORK(&fl->put_work, fastrpc_file_put_worker);
 	init_waitqueue_head(&fl->proc_state_notif.notif_wait_queue);
 	spin_lock_init(&fl->proc_state_notif.nqlock);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
@@ -3834,25 +3905,42 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	 * to be freed here. And kfree will do sanity check on NULL pointer.
 	 * */
 	spin_lock_irqsave(&fl->dspsignals_lock, flags);
-	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS / FASTRPC_DSPSIGNAL_GROUP_SIZE); i++)
+	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS / FASTRPC_DSPSIGNAL_GROUP_SIZE); i++) {
 		kfree(fl->signal_groups[i]);
+		fl->signal_groups[i] = NULL;
+	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, flags);
 
-	fastrpc_free_user(fl);
 #ifdef CONFIG_DEBUG_FS
 	debugfs_remove(fl->debugfs_file);
 #endif
+	fastrpc_free_user(fl);
 	mutex_destroy(&fl->signal_create_mutex);
 	mutex_destroy(&fl->remote_map_mutex);
 	mutex_destroy(&fl->map_mutex);
-	kfree(fl);
 
-	fastrpc_channel_update_invoke_cnt(cctx, false);
-
-	fastrpc_channel_ctx_put(cctx);
+	fastrpc_file_put(fl, false);
 	file->private_data = NULL;
 
 	return 0;
+}
+
+/*
+ * Only the final memory deallocation is deferred here. All substantive
+ * cleanup (virt_fastrpc_close, list removal, buffer/map freeing) is done
+ * synchronously in fastrpc_device_release, which runs in the caller's
+ * process context. This is intentional: virt_fastrpc_close can block
+ * waiting for a backend response, and blocking the caller's close()
+ * syscall is preferable to hanging a shared kworker thread that may be
+ * reached when this callback is triggered from interrupt context.
+ */
+static void fastrpc_user_release(struct kref *ref)
+{
+	struct fastrpc_user *fl = container_of(ref, struct fastrpc_user, refcount);
+	struct fastrpc_channel_ctx *cctx = fl->cctx;
+
+	kfree(fl);
+	fastrpc_channel_ctx_put(cctx);
 }
 
 static const struct file_operations fastrpc_fops = {
