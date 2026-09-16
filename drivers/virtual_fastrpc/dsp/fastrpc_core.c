@@ -626,6 +626,11 @@ int fastrpc_handle_rpc_response(struct fastrpc_channel_ctx *cctx,
 	u64 ctxid = 0;
 	u32 rsp_flags = 0, early_wake_time = 0, version = 0;
 
+	if (!data) {
+		RPC_ERR("rpc response data is NULL\n");
+		return -EINVAL;
+	}
+
 	if (len == sizeof(uint64_t)) {
 		fastrpc_handle_signal_rpmsg(*((uint64_t *)data), cctx);
 		return 0;
@@ -2996,6 +3001,8 @@ bail:
 		kfree(mdctx->cids);
 		kfree(mdctx->session_ids);
 		kfree(mdctx->domains);
+		kfree(mdctx->upids);
+		kfree(mdctx->fls);
 		kfree(mdctx);
 	}
 	mutex_unlock(gmut);
@@ -3098,6 +3105,8 @@ static int fastrpc_multidomain_ctx_cleanup(struct fastrpc_user *fl,
 	kfree(mdctx->cids);
 	kfree(mdctx->session_ids);
 	kfree(mdctx->domains);
+	kfree(mdctx->upids);
+	kfree(mdctx->fls);
 	kfree(mdctx);
 bail:
 	mutex_unlock(gmut);

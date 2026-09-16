@@ -293,7 +293,7 @@ static int fastrpc_add_domain_to_table(struct fastrpc_domain **domain,
 			* the channel has gone through ssr. In that case, its status has to be
 			* DOWN. If not, system is in bad-state.
 			*/
-			err = EINVAL;
+			err = -EINVAL;
 			RPC_ERR("Error %d: %s (phy id %u) already in table with bad status %d",
 					err, entry->name, entry->phy_id, entry->status);
 			return err;
@@ -349,11 +349,12 @@ struct fastrpc_domain *fastrpc_lookup_domain_in_table(
 static void fastrpc_delete_domains_table(void)
 {
 	struct fastrpc_domain *domain = NULL;
+	struct hlist_node *tmp = NULL;
 	struct mutex *hmut = &g_frpc.hmut;
 	int i = 0;
 
 	mutex_lock(hmut);
-	hash_for_each(g_frpc.fastrpc_domains_table, i, domain, node) {
+	hash_for_each_safe(g_frpc.fastrpc_domains_table, i, tmp, domain, node) {
 		hash_del(&domain->node);
 		kfree(domain);
 	}
@@ -740,6 +741,7 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 		fastrpc_delete_domains_table();
 		mutex_destroy(&g_frpc.hmut);
 		kfree(g_domain_info);
+		g_domain_info = NULL;
 	}
 
 	mutex_destroy(&gdriver->gmut);
