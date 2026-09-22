@@ -11,9 +11,8 @@
 #include <linux/debugfs.h>
 #include <linux/string.h>
 #include "virtio_rsm_client.h"
-/* Virtio ID of RSM : 0xC00E */
-#define VIRTIO_ID_RSM   0xC00E
-//#define TEST_MODE     1
+/* Virtio ID of RSM : 0xC010 */
+#define VIRTIO_ID_RSM   0xC010
 
 extern struct virtio_rsm_dev* g_vdevrsm;
 
@@ -43,6 +42,8 @@ current->pid, prix[0x3 & (level)], __func__, __LINE__, ## args)
 #define DEF_BUFF_SIZE MAX_CLIENT*1024
 #define NO_ERROR 0 
 #define ERROR -1
+#define RSM_FE_MAX_JOB_NAME_LEN 64U /* Defined in RSM Service */
+
 enum rsm_cmd{
         RSM_REGISTER = 0,
         RSM_ACQUIRE = 1,
@@ -54,11 +55,12 @@ enum rsm_cmd{
 typedef struct {
     unsigned int upid; //unique pid sent to dsp
     unsigned int tid; // thread id sent to dsp
+	uint32_t nspID; //The NSP to register this client for
 }rsm_register_tx;
 
 typedef struct {
     rsm_handle handle; // RSM handle
-    char* job_name;
+    char job_name[RSM_FE_MAX_JOB_NAME_LEN];
 }rsm_acquire_tx;
 
 typedef struct {

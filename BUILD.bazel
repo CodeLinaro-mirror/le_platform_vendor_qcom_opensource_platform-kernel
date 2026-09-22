@@ -17,6 +17,14 @@ ddk_headers(
     includes = ["include/soc/qcom"],
 )
 
+ddk_headers(
+    name = "rsm_fe_headers",
+    hdrs = glob([
+        "drivers/rsm_fe/*.h",
+    ]),
+    includes = ["drivers/rsm_fe"],
+)
+
 load(":build/autogvm.bzl", "define_autogvm")
 
 define_autogvm()

@@ -7,6 +7,18 @@
 #define VIRTIO_RSM_F_NSP_SHARING    7 /* Bit as defined in virtio vdev */
 struct virtio_rsm_dev* g_vdevrsm = NULL;
 
+/*#define RSM_FE_TEST*/
+#ifdef RSM_FE_TEST
+#define RSM_FE_EXTENDED_TEST 1
+static void TestRSMFENormalFlow(bool newAPI, uint32_t nspID, const char *jobName);
+#if RSM_FE_EXTENDED_TEST
+static void TestRSMFEAcquireInvalid(uint32_t nspID);
+static void TestRSMFEMaxRegisters(uint32_t nspID);
+static void TestRSMFEDoubleRegisterFlow(uint32_t nspID);
+static void TestRSMFEDoubleUnregisterFlow(uint32_t nspID);
+#endif
+#endif /*RSM_FE_TEST*/
+
 static void * txbuf_get(void)
 {
 	unsigned int len = 0;
@@ -265,17 +277,23 @@ static int virtio_rsm_probe(struct virtio_device *vdev)
     virtqueue_kick(vdev_rsm->vq_rx);
 
     /**********************testing APIs****************/
-#ifdef TEST_MODE
-    rsm_handle handle;
-    rsm_acquire_rsp_v2 acq_response;
-    char job_name[5] = "GVM1";
-    unsigned int upid = 1234;
-    unsigned int tid = 1;
-    err = rsm_register(&handle,upid,tid);
-    err = rsm_acquire(handle, job_name, &acq_response);
-    err = rsm_release_v2(handle, acq_response.token);
-    err = rsm_unregister_v2(handle);
-#endif
+#ifdef RSM_FE_TEST
+    TestRSMFENormalFlow(false, 0U, NULL);
+    TestRSMFENormalFlow(true, 0U, NULL);
+    //Calling with a job name not present in the job table. Should use the default "ANY_#" jobs.
+    TestRSMFENormalFlow(true, 0U, "calc0");
+    TestRSMFENormalFlow(true, 1U, "nsp1"); // This register will fail for Monaco and should pass for lemans assuming NSP1 is shared in device table
+#if RSM_FE_EXTENDED_TEST
+    TestRSMFEAcquireInvalid(0U);
+    TestRSMFEAcquireInvalid(1U); //For Lemans
+    TestRSMFEDoubleRegisterFlow(0U);
+    TestRSMFEDoubleRegisterFlow(1U); //For Lemans
+    TestRSMFEDoubleUnregisterFlow(0U);
+    TestRSMFEDoubleUnregisterFlow(1U); //For Lemans
+    TestRSMFEMaxRegisters(0U);
+    TestRSMFEMaxRegisters(1U); //For Lemans
+#endif /* RSM_FE_EXTENDED_TEST */
+#endif /* RSM_FE_TEST */
     /*************************************************/
     //virt_rsm_init_txbuf(vdev_rsm);  such function can be used to do handshake before the comm starts
     dev_info(&vdev->dev, "RSM Virtio driver probe successful \n");
@@ -338,6 +356,7 @@ module_init(virtio_rsm_init);
 module_exit(virtio_rsm_exit);
 
 EXPORT_SYMBOL_GPL(rsm_register);
+EXPORT_SYMBOL_GPL(rsm_register_for_nsp);
 EXPORT_SYMBOL_GPL(rsm_acquire);
 EXPORT_SYMBOL_GPL(rsm_release_v2);
 EXPORT_SYMBOL_GPL(rsm_unregister_v2);
@@ -347,3 +366,212 @@ EXPORT_SYMBOL_GPL(rsm_unregister_batch);
 MODULE_DEVICE_TABLE(virtio, id_table);
 MODULE_DESCRIPTION("RSM virtio driver");
 MODULE_LICENSE("GPL v2");
+
+#ifdef RSM_FE_TEST
+static void TestRSMFENormalFlow(bool newAPI, uint32_t nspID, const char *jobName)
+{
+    int err;
+    rsm_handle handle;
+    rsm_acquire_rsp_v2 acq_response;
+    char job_name[6] = "ANY_0"; /* Replace with a string available in the Job Table for the specific NSP */
+    static uint32_t upid = 0x80000000U;
+    uint32_t tid = 1;
+    ++upid; //Increment the UPID for each test
+    if(jobName == NULL)
+    {
+        jobName = job_name;
+    }
+    if(newAPI == false)
+    {
+        err = rsm_register(&handle,upid,tid);
+    }
+    else
+    {
+        RSMRegisterPDUType regData = {upid, tid, nspID};
+        err = rsm_register_for_nsp(&handle, regData);
+    }
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Normal Test Register failed. Err %d\n", err);
+        return;
+    }
+    err = rsm_acquire(handle, jobName, &acq_response);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Normal Test Acquire jobName '%s' failed. Err %d\n", jobName, err);
+    }
+    else
+    {
+        err = rsm_release_v2(handle, acq_response.token);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Normal Test Release failed. Err %d\n", err);
+        }
+    }
+    err = rsm_unregister_v2(handle);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Normal Test Unregister failed. Err %d\n", err);
+    }
+}
+
+#if RSM_FE_EXTENDED_TEST
+static void TestRSMFEAcquireInvalid(uint32_t nspID)
+{
+    int err;
+    rsm_handle handle;
+    rsm_acquire_rsp_v2 acq_response;
+    char jobNameTooLong[] = "ThisStringCannotBeAJobNameAsItIsLongerThanSixtyThreeCharacters64";
+    static uint32_t upid = 0x90000000U;
+    uint32_t tid = 1;
+    ++upid; //Increment the UPID for each test
+    RSMRegisterPDUType regData = {upid, tid, nspID};
+    err = rsm_register_for_nsp(&handle, regData);
+if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Register failed. Err %d\n", err);
+        return;
+    }
+
+    /* Acquire with NULL job name */
+    err = rsm_acquire(handle, NULL, &acq_response);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Acquire NULL Job failed. Err %d. PASS\n", err);
+    }
+    else
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Acquire NULL Job got no error. FAIL\n", err);
+        err = rsm_release_v2(handle, acq_response.token);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Release failed. Err %d\n", err);
+        }
+    }
+
+    /* Acquire with long job name */
+    err = rsm_acquire(handle, jobNameTooLong, &acq_response);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Acquire LONG Job Name failed. Err %d. PASS\n", err);
+    }
+    else
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Acquire LONG Job Name got no error. FAIL\n", err);
+        err = rsm_release_v2(handle, acq_response.token);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Release failed. Err %d\n", err);
+        }
+    }
+
+    err = rsm_unregister_v2(handle);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Invalid Acquire Test, Unregister failed. Err %d\n", err);
+    }
+}
+
+static void TestRSMFEDoubleRegisterFlow(uint32_t nspID)
+{
+    int err;
+    rsm_handle handle = 0U, handle2 = 0U;
+    static uint32_t upid = 0xA0000000U;
+    uint32_t tid = 1;
+    ++upid; //Increment the UPID for each test
+    RSMRegisterPDUType regData = {upid, tid, nspID};
+    err = rsm_register_for_nsp(&handle, regData);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Register Test Register 1 failed. Err %d\n", err);
+        return;
+    }
+
+    err = rsm_register_for_nsp(&handle, regData);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Register Test Register 2 returned Err %d. PASS\n", err);
+    }
+    else
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Register Test Register 2 got no error. FAIL\n");
+        err = rsm_unregister_v2(handle2);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Double Register Test Unregister 2 returned. Err %d.\n", err);
+        }
+    }
+    err = rsm_unregister_v2(handle);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Register Test Unregister 1 returned. Err %d.\n", err);
+    }
+}
+
+static void TestRSMFEDoubleUnregisterFlow(uint32_t nspID)
+{
+    int err;
+    rsm_handle handle = 0U;
+    static uint32_t upid = 0xB0000000U;
+    uint32_t tid = 1;
+    ++upid; //Increment the UPID for each test
+    RSMRegisterPDUType regData = {upid, tid, nspID};
+    err = rsm_register_for_nsp(&handle, regData);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Unregister Test: Register failed. Err %d\n", err);
+        return;
+    }
+    err = rsm_unregister_v2(handle);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Unregister Test Unregister 1 Failed. Err %d.\n", err);
+    }
+    err = rsm_unregister_v2(handle);
+    if(err != NO_ERROR)
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Unregister Test Unregister 2 returned Err %d. PASS\n", err);
+    }
+    else
+    {
+        LOG_RSMFE(LEVEL_ERR, " RSM FE Double Unregister Test Unregister 2 got no error. FAIL\n");
+    }
+}
+
+static void TestRSMFEMaxRegisters(uint32_t nspID)
+{
+    int err;
+    rsm_handle handle[MAX_CLIENT+1];
+    static uint32_t upid = 0xC0000000U;
+    uint32_t tid = 1;
+    ++upid; //Increment the UPID for each test
+    uint32_t handleIter = 0;
+    for(; handleIter<(MAX_CLIENT+1U); handleIter++)
+    {
+        RSMRegisterPDUType regData = {upid, tid+handleIter, nspID};
+        err = rsm_register_for_nsp(&handle[handleIter], regData);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Max Register Test: Register %d failed. Err %d. %s\n", handleIter+1U, err, (handleIter==MAX_CLIENT)?"PASS":"FAIL");
+        }
+        else
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Max Register Test: Register %d succeeded. %s\n", handleIter+1U, (handleIter!=MAX_CLIENT)?"PASS":"FAIL");
+        }
+    }
+
+    for(handleIter = 0; handleIter<MAX_CLIENT; handleIter++)
+    {
+        err = rsm_unregister_v2(handle[handleIter]);
+        if(err != NO_ERROR)
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Max Register Test: Unregister %d failed. Err %d. %s\n", handleIter+1U, err, (handleIter==MAX_CLIENT)?"PASS":"FAIL");
+        }
+        else
+        {
+            LOG_RSMFE(LEVEL_ERR, " RSM FE Max Register Test: Unregister %d succeeded. %s\n", handleIter+1U, (handleIter!=MAX_CLIENT)?"PASS":"FAIL");
+        }
+    }
+}
+#endif /* RSM_FE_EXTENDED_TEST */
+#endif /*RSM_FE_TEST*/

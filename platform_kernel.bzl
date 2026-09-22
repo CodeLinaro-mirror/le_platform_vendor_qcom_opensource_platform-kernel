@@ -60,6 +60,18 @@ def _get_module_srcs(target, variant, module, options):
 
     return globbed_srcs
 
+def _get_module_deps(target, variant, module, options):
+    deps = [] + module["deps"]
+    for option in module["config_deps"]:
+        deps.extend(module["config_deps"][option].get(option in options, []))
+    return [_replace_formatting_codes(target, variant, dep) for dep in deps]
+
+def _get_module_copts(module, options):
+    copts = [] + module["copts"]
+    for option in module["config_copts"]:
+        copts.extend(module["config_copts"][option].get(option in options, []))
+    return copts
+
 def define_target_variant_modules(target, variant, modules, extra_options = [], config_option = None):
     kernel_build_variant = "{}_{}".format(target, variant)
     options = _get_options(target, variant, config_option, modules, extra_options)
@@ -91,10 +103,10 @@ def define_target_variant_modules(target, variant, modules, extra_options = [], 
 	    kernel_build = kernel_build,
             srcs = module_srcs,
             out = "{}.ko".format(module["name"]),
-            deps = deps + [_replace_formatting_codes(target, variant, dep) for dep in module["deps"]],
+            deps = deps + _get_module_deps(target, variant, module, options),
             hdrs = module["hdrs"],
             local_defines = target_local_defines,
-            copts = module["copts"],
+            copts = _get_module_copts(module, options),
         )
         module_rules.append(rule_name)
 

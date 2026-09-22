@@ -348,7 +348,7 @@ void vfastrpc_mmap_free(struct vfastrpc_file *vfl,
 		if (!map->refs && !map->ctx_refs && !map->dma_handle_refs) {
 			hlist_del_init(&map->hn);
 			if (!IS_ERR_OR_NULL(map->table)) {
-				dma_buf_unmap_attachment(map->attach, map->table,
+				dma_buf_unmap_attachment_unlocked(map->attach, map->table,
 						DMA_BIDIRECTIONAL);
 				map->table = NULL;
 			}
@@ -460,7 +460,7 @@ int vfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd,
 		 */
 		map->attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 		VERIFY(err, !IS_ERR_OR_NULL(map->table =
-					dma_buf_map_attachment(map->attach,
+					dma_buf_map_attachment_unlocked(map->attach,
 					DMA_BIDIRECTIONAL)));
 		if (err) {
 			dev_err(me->dev, "can't get sg table of dma buf\n");
@@ -708,7 +708,7 @@ int hfastrpc_mmap_create(struct vfastrpc_file *vfl, int fd,
 		 */
 		map->attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 		VERIFY(err, !IS_ERR_OR_NULL(map->table =
-					dma_buf_map_attachment(map->attach,
+					dma_buf_map_attachment_unlocked(map->attach,
 					DMA_BIDIRECTIONAL)));
 		if (err) {
 			dev_err(me->dev, "can't get sg table of dma buf\n");
@@ -786,7 +786,7 @@ void hfastrpc_mmap_free(struct vfastrpc_file *vfl,
 
 			hlist_del_init(&map->hn);
 			if (!IS_ERR_OR_NULL(map->table)) {
-				dma_buf_unmap_attachment(map->attach, map->table,
+				dma_buf_unmap_attachment_unlocked(map->attach, map->table,
 						DMA_BIDIRECTIONAL);
 				map->table = NULL;
 			}

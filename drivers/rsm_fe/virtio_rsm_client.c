@@ -3,6 +3,7 @@
 *  Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. 
 */
 #include "virtio_rsm_base.h"
+#define RSMFE_MAX_NSP_COUNT 2U /* TODO: This can probably be retrieved from the vdev during probe and populated */
 
 /* Check and returns a valid index
  * If already registered returns MAX_CLIENT + 1
@@ -67,11 +68,18 @@ static void delete_client_table_entry(unsigned int upid, unsigned int tid)
 
 int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
 {
+    /* Default the existing API to NSP 0 */
+    RSMRegisterPDUType rsmRegData = {upid, tid, 0U};
+    return rsm_register_for_nsp(handle, rsmRegData);
+}
+
+int rsm_register_for_nsp(rsm_handle* handle, RSMRegisterPDUType rsmRegData)
+{
     struct virtio_rsm_txbuf *txbuf = NULL;
     int idx = 0;
     int err = NO_ERROR;
 
-    if ((handle == NULL) || (upid == 0))
+    if ((handle == NULL) || (rsmRegData.upid == 0U) || (rsmRegData.nspID >= RSMFE_MAX_NSP_COUNT))
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. Invalid Args \n");
         return -EINVAL;
@@ -83,7 +91,7 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
     }
 
     /*add client to client table*/
-    idx = add_client_table_entry(upid, tid);
+    idx = add_client_table_entry(rsmRegData.upid, rsmRegData.tid);
     if(idx >= MAX_CLIENT)
     {
         if(idx > MAX_CLIENT)
@@ -105,14 +113,15 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
         err = ENOMEM;
         LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. out of memory. err = %d \n",err);
         /* release the client index */
-        delete_client_table_entry(upid,tid);
+        delete_client_table_entry(rsmRegData.upid, rsmRegData.tid);
         return -err;
     }
 
     LOG_RSMFE(LEVEL_INFO, " rsm_register start msgid = %d \n",idx);
     txbuf->cmd = RSM_REGISTER;
-    txbuf->send_data.register_data.upid = upid;
-    txbuf->send_data.register_data.tid = tid;
+    txbuf->send_data.register_data.upid = rsmRegData.upid;
+    txbuf->send_data.register_data.tid = rsmRegData.tid;
+    txbuf->send_data.register_data.nspID = rsmRegData.nspID;
     txbuf->msg_id = idx;
     init_completion(&g_vdevrsm->client_list[idx].work);
     err = virt_rsm_txbuf(txbuf);
@@ -120,7 +129,7 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful. TX Failed: %d \n", err);
         /* Send was unsuccessful so release the client index */
-        delete_client_table_entry(upid,tid);
+        delete_client_table_entry(rsmRegData.upid, rsmRegData.tid);
         kfree(txbuf);
         return err;
     }
@@ -132,23 +141,25 @@ int rsm_register(rsm_handle* handle, unsigned int upid, unsigned int tid)
     if((*handle == 0) || (g_vdevrsm->client_list[idx].rxbuf.return_val.err != 0))
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_register unsuccessful err = %d \n",g_vdevrsm->client_list[idx].rxbuf.return_val.err);
-        delete_client_table_entry(upid,tid);
+        err = g_vdevrsm->client_list[idx].rxbuf.return_val.err;
+        delete_client_table_entry(rsmRegData.upid, rsmRegData.tid);
     }
     else
     {
         LOG_RSMFE(LEVEL_INFO, " rsm_register completed handle = %x \n",*handle);
         g_vdevrsm->client_list[idx].handle = *handle;
     }
-    
+
     kfree(txbuf);
-    return g_vdevrsm->client_list[idx].rxbuf.return_val.err;
+    return -err;
 }
 
-int rsm_acquire(rsm_handle handle, char* job_name, rsm_acquire_rsp_v2 *response)
+int rsm_acquire(rsm_handle handle, const char *job_name, rsm_acquire_rsp_v2 *response)
 {
     struct virtio_rsm_txbuf *txbuf = NULL;
     int idx = 0;
     int err = NO_ERROR;
+    ssize_t strCpyRet = 0, kerCpyRet = 0;
     if ((job_name == NULL) || (handle == 0))
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. invalid inputs \n");
@@ -179,7 +190,44 @@ int rsm_acquire(rsm_handle handle, char* job_name, rsm_acquire_rsp_v2 *response)
     }
     txbuf->cmd = RSM_ACQUIRE;
     txbuf->send_data.acquire_data.handle = handle;
-    //memcpy(txbuf->send_data.acquire_data.job_name , job_name , sizeof(*job_name)) ;
+
+    //Use this if one we confirm the job_name is a kernel space pointer
+    //strscpy(txbuf->send_data.acquire_data.job_name , job_name , sizeof(txbuf->send_data.acquire_data.job_name));
+    strCpyRet = strncpy_from_user(txbuf->send_data.acquire_data.job_name, (const char __user *)job_name, sizeof(txbuf->send_data.acquire_data.job_name));
+    if (strCpyRet < 0)
+    {
+        if((strCpyRet == -EFAULT) &&
+            // Failed as userspace, try as kernel pointer
+            // Check if it looks like a kernel address
+            ((unsigned long)job_name >= TASK_SIZE))
+        {
+            // Likely a kernel pointer, use kernel copy
+            kerCpyRet = strscpy(txbuf->send_data.acquire_data.job_name, job_name, sizeof(txbuf->send_data.acquire_data.job_name));
+            if(kerCpyRet < 0)
+            {
+                LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. Invalid Jobname Kernel Pointer. handle %x err = %d \n", handle, -kerCpyRet);
+                kfree(txbuf);
+                return kerCpyRet;
+            }
+            // strscpy returns length, make it consistent with strncpy_from_user
+            strCpyRet = strlen(job_name);
+        }
+        else
+        {
+            LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. Invalid Jobname Pointer. handle %x err = %d \n", handle, -strCpyRet);
+            kfree(txbuf);
+            return strCpyRet;
+        }
+    }
+    if (strCpyRet >= sizeof(txbuf->send_data.acquire_data.job_name))
+    {
+        // String was truncated but is still null-terminated
+        err = E2BIG;
+        LOG_RSMFE(LEVEL_ERR, " rsm_acquire unsuccessful. Jobname too long (%d). handle %x err = %d \n", strCpyRet, handle, err);
+        kfree(txbuf);
+        return -err;
+    }
+
     txbuf->msg_id = idx;
     g_vdevrsm->client_list[idx].rxbuf.return_val.err = 0;
     init_completion(&g_vdevrsm->client_list[idx].work);
@@ -321,15 +369,16 @@ int rsm_unregister_v2(rsm_handle handle)
     if(g_vdevrsm->client_list[idx].rxbuf.return_val.err != 0)
     {
         LOG_RSMFE(LEVEL_ERR, " rsm_unregister unsuccessful. handle %x err = %d \n", handle, g_vdevrsm->client_list[idx].rxbuf.return_val.err);
+        err = g_vdevrsm->client_list[idx].rxbuf.return_val.err;
     }
     else
     {
         delete_client_table_entry(g_vdevrsm->client_list[idx].upid,g_vdevrsm->client_list[idx].tid);
         LOG_RSMFE(LEVEL_INFO, " rsm_unregister completed. handle %x \n", handle);
     }
-    
+
     kfree(txbuf);
-    return g_vdevrsm->client_list[idx].rxbuf.return_val.err;
+    return -err;
 }
 
 int rsm_unregister_batch(unsigned int upid)
