@@ -12,18 +12,27 @@ long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 				unsigned long arg)
 {
 	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
-	struct fastrpc_channel_ctx *cctx = fl->cctx;
+	struct fastrpc_channel_ctx *cctx;
 	char __user *argp = (char __user *)arg;
 	int err;
 	int process_init = 0;
 	unsigned long flags = 0;
 
 	RPC_DBG("ioctl: 0x%x\n", cmd);
+
+	err = fastrpc_file_get(fl);
+	if (err) {
+		RPC_ERR("failed to get user-obj for %s, fl (%pK)\n",
+				current->comm, fl);
+		return err;
+	}
+	cctx = fl->cctx;
 	fastrpc_channel_ctx_get(cctx);
 	spin_lock_irqsave(&cctx->lock, flags);
 	if (atomic_read(&cctx->teardown) || fl->state >= DSP_EXIT_START) {
 		spin_unlock_irqrestore(&cctx->lock, flags);
 		fastrpc_channel_ctx_put(cctx);
+		fastrpc_file_put(fl, false);
 		RPC_DBG("ioctl refused: teardown=%d,state=%d\n",
 				atomic_read(&cctx->teardown),
 				fl->state);
@@ -78,6 +87,6 @@ long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
 	fastrpc_channel_update_invoke_cnt(cctx, false);
 
 	fastrpc_channel_ctx_put(fl->cctx);
-
+	fastrpc_file_put(fl, false);
 	return err;
 }
