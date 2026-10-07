@@ -4,6 +4,11 @@
 */
 #include <linux/version.h>
 #include "virtio_compressched_base.h"
+
+/* Forward declarations for the character device init/exit functions
+ * defined in compressched_cdev.c */
+int  compressched_cdev_init(void);
+void compressched_cdev_exit(void);
 #define VIRTIO_COMPRESSCHED_F_NSP_SHARING    7 /* Bit as defined in virtio vdev */
 struct virtio_compressched_dev* g_vdevcompressched = NULL;
 
@@ -96,6 +101,27 @@ static void virtio_compressched_recv_cb(struct virtqueue *vq_rx)
             break;
         }
 
+        /* msg_id == MAX_CLIENT signals an unsolicited fault notification */
+        if (buf->msg_id == MAX_CLIENT) {
+            if (buf->cmd == COMPRESSCHED_FAULT_NOTIFY_LIB) {
+                unsigned long fl;
+                spin_lock_irqsave(&g_vdevcompressched->fault_lock, fl);
+                g_vdevcompressched->fault_pending = buf->fault_notify;
+                spin_unlock_irqrestore(&g_vdevcompressched->fault_lock, fl);
+                dev_info(&vq_rx->vdev->dev,
+                         "COMPRESSCHED Rx: fault notify domain=%d type=%u\n",
+                         buf->fault_notify.domain_id,
+                         buf->fault_notify.fault_type);
+                complete(&g_vdevcompressched->fault_work);
+            } else {
+                LOG_COMPRESSCHEDFE(LEVEL_ERR,
+                    "COMPRESSCHED Rx: unexpected cmd %d for msg_id MAX_CLIENT\n",
+                    buf->cmd);
+            }
+            rxbuf_emplace(buf);
+            continue;
+        }
+
         if(buf->msg_id >= MAX_CLIENT || buf->msg_id < 0)
         {
             /* Invalid client handle received */
@@ -105,7 +131,7 @@ static void virtio_compressched_recv_cb(struct virtqueue *vq_rx)
         }
 
         memcpy(&g_vdevcompressched->client_list[buf->msg_id].rxbuf,buf,sizeof(struct virtio_compressched_rxbuf));
-        dev_info(&vq_rx->vdev->dev, "COMPRESSCHED Rx: Received rxbuf for msgid %d!!\n",buf->msg_id);   
+        dev_info(&vq_rx->vdev->dev, "COMPRESSCHED Rx: Received rxbuf for msgid %d!!\n",buf->msg_id);
         /* Unblock the client that is waiting */
         complete(&g_vdevcompressched->client_list[buf->msg_id].work);
         rxbuf_emplace(buf);
@@ -208,7 +234,10 @@ static int init_vqs(struct virtio_compressched_dev *vdev_compressched)
 
 static void init_client_table(void)
 {
+    int i;
     memset(g_vdevcompressched->client_list, 0, sizeof(g_vdevcompressched->client_list));
+    for (i = 0; i < MAX_CLIENT; i++)
+        g_vdevcompressched->handle_ht[i] = MAX_CLIENT;
 }
 
 static void init_client_upid(struct virtio_compressched_dev *vdev_compressched)
@@ -235,32 +264,33 @@ static int virtio_compressched_probe(struct virtio_device *vdev)
 			"COMPRESSCHED BE not loaded on the host\n");
 		return -ENODEV;
     }
+
+    //#ifdef EN_NSP_SHARING
 	if (!virtio_has_feature(vdev, VIRTIO_COMPRESSCHED_F_NSP_SHARING)) {
 		dev_err(&vdev->dev,
 			"NSP Sharing is not enabled on the host\n");
-		return -ENODEV;
+		//return -ENODEV;
 	}
-  vdev_compressched = kzalloc(sizeof(struct virtio_compressched_dev), GFP_KERNEL);
-  if (!vdev_compressched) {
+    //#endif
+    vdev_compressched = kzalloc(sizeof(struct virtio_compressched_dev), GFP_KERNEL);
+    if (!vdev_compressched) {
     err = -ENOMEM;
       LOG_COMPRESSCHEDFE(LEVEL_ERR, "Unable to alloc mem for device \n");
     return err;
-  }
-  
-  g_vdevcompressched = vdev_compressched;
-  vdev->priv = vdev_compressched;
-  vdev_compressched->vdev = vdev;
-  vdev_compressched->dev = vdev->dev.parent;
-  init_client_upid(g_vdevcompressched);
- 	err = init_vqs(vdev_compressched);
+    }
+
+    g_vdevcompressched = vdev_compressched;
+    vdev->priv = vdev_compressched;
+    vdev_compressched->vdev = vdev;
+    vdev_compressched->dev = vdev->dev.parent;
+    init_client_table();
+
+	err = init_vqs(vdev_compressched);
 	if (err) 
     {
 		dev_err(&vdev->dev, "failed to initialized virtqueue\n");
 		return err;
 	}  
-
-    /* from this point on, the device can notify and get callbacks */
-    virtio_device_ready(vdev);
 
     /* set up the receive buffers */
 	for (i = 0; i < vdev_compressched->num_buf; i++) {
@@ -273,25 +303,41 @@ static int virtio_compressched_probe(struct virtio_device *vdev)
 	}
 
     spin_lock_init(&vdev_compressched->vq_clientlock);
-    init_client_table();
+    spin_lock_init(&vdev_compressched->fault_lock);
+    init_completion(&vdev_compressched->fault_work);
+    memset(&vdev_compressched->fault_pending, 0, sizeof(vdev_compressched->fault_pending));
+    init_client_upid(g_vdevcompressched);
+
+    /* from this point on, the device can notify and get callbacks */
+    virtio_device_ready(vdev);
 
     virtqueue_kick(vdev_compressched->vq_rx);
 
     /**********************testing APIs****************/
+//#define TEST_MODE
 #ifdef TEST_MODE
     compressched_handle handle;
     compressched_acquire_rsp_v2 acq_response;
     char job_name[32] = "GVM_BASE_RES_REQ";
     unsigned int upid = 1234;
     unsigned int target_id = 1;
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_register upid=%u target_id=%u\n", upid, target_id);
     err = compressched_register(&handle,upid,target_id);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_register returned err=%d handle=%d\n", err, handle);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_acquire job_name=%s\n", job_name);
     err = compressched_acquire(handle, job_name, &acq_response);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_acquire returned err=%d token=%u\n", err, acq_response.token);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_release_v2 handle=%d token=%u\n", handle, acq_response.token);
     err = compressched_release_v2(handle, acq_response.token);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_release_v2 returned err=%d\n", err);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_unregister_v2 handle=%d\n", handle);
     err = compressched_unregister_v2(handle);
-    
-    
+    dev_info(&vdev->dev, "TEST_MODE: compressched_unregister_v2 returned err=%d\n", err);
+
+
     strscpy(job_name, "GVM_SUP_RES_REQ", sizeof(job_name));
     job_name[sizeof(job_name) - 1] = '\0';
+    dev_info(&vdev->dev, "TEST_MODE: job_name set to %s\n", job_name);
 
     compressched_register_msg super_res_reg;
     super_res_reg.nsp_count = 2;
@@ -300,14 +346,33 @@ static int virtio_compressched_probe(struct virtio_device *vdev)
     super_res_reg.logical_id[0] = 16;
     super_res_reg.logical_id[1] = 17;    
     super_res_reg.target_id = 2;
+    dev_info(&vdev->dev, "TEST_MODE: super_res_reg nsp_count=%u upid[0]=%u upid[1]=%u logical_id[0]=%u logical_id[1]=%u target_id=%u\n",
+             super_res_reg.nsp_count, super_res_reg.upid[0], super_res_reg.upid[1],
+             super_res_reg.logical_id[0], super_res_reg.logical_id[1], super_res_reg.target_id);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_register_v2\n");
     err = compressched_register_v2(&handle,&super_res_reg);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_register_v2 returned err=%d handle=%d\n", err, handle);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_acquire job_name=%s\n", job_name);
     err = compressched_acquire(handle, job_name, &acq_response);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_acquire returned err=%d token=%u\n", err, acq_response.token);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_release_v2 handle=%d token=%u\n", handle, acq_response.token);
     err = compressched_release_v2(handle, acq_response.token);
+    dev_info(&vdev->dev, "TEST_MODE: compressched_release_v2 returned err=%d\n", err);
+    dev_info(&vdev->dev, "TEST_MODE: calling compressched_unregister_v2 handle=%d\n", handle);
     err = compressched_unregister_v2(handle);
-    
+    dev_info(&vdev->dev, "TEST_MODE: compressched_unregister_v2 returned err=%d\n", err);
+
 #endif
     /*************************************************/
     //virt_compressched_init_txbuf(vdev_compressched);  such function can be used to do handshake before the comm starts
+
+    /* Register /dev/compressched_fe so the userspace library can open it */
+    err = compressched_cdev_init();
+    if (err) {
+        dev_err(&vdev->dev, "COMPRESSCHED cdev init failed err=%d\n", err);
+        return err;
+    }
+
     dev_info(&vdev->dev, "COMPRESSCHED Virtio driver probe successful \n");
     return 0;
 }
@@ -316,6 +381,10 @@ static void virtio_compressched_remove(struct virtio_device *vdev)
 {
     struct virtio_compressched_dev *dev = vdev->priv;
     void *buf , *buf1;
+
+    /* Deregister /dev/compressched_fe before tearing down virtio */
+    compressched_cdev_exit();
+
     /*
         * disable vq interrupts: equivalent to
         * vdev->config->reset(vdev)
@@ -370,9 +439,18 @@ module_exit(virtio_compressched_exit);
 EXPORT_SYMBOL_GPL(compressched_register);
 EXPORT_SYMBOL_GPL(compressched_register_v2);
 EXPORT_SYMBOL_GPL(compressched_acquire);
+EXPORT_SYMBOL_GPL(compressched_acquire_legacy);
 EXPORT_SYMBOL_GPL(compressched_release_v2);
 EXPORT_SYMBOL_GPL(compressched_unregister_v2);
 EXPORT_SYMBOL_GPL(compressched_unregister_batch);
+EXPORT_SYMBOL_GPL(compressched_query);
+EXPORT_SYMBOL_GPL(compressched_tracing_start);
+EXPORT_SYMBOL_GPL(compressched_tracing_stop);
+EXPORT_SYMBOL_GPL(compressched_debug_cmd_fn);
+EXPORT_SYMBOL_GPL(compressched_subscribe_faults_fn);
+EXPORT_SYMBOL_GPL(compressched_unsubscribe_faults_fn);
+EXPORT_SYMBOL_GPL(compressched_avail_res_acquire);
+EXPORT_SYMBOL_GPL(compressched_avail_res_release);
 
 //module_virtio_driver(virtio_compressched_driver);
 MODULE_DEVICE_TABLE(virtio, id_table);
