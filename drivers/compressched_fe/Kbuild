@@ -7,6 +7,7 @@ LINUXINCLUDE	+= \
 		   -I$(PLAT_DRV_ROOT)/include/linux
 
 compressched_fe-objs := virtio_compressched_base.o\
-			virtio_compressched_client.o
+			virtio_compressched_client.o\
+			compressched_fe_cdev.o
 
 obj-$(CONFIG_VIRTIO_COMPRESSCHEDFE) += compressched_fe.o
