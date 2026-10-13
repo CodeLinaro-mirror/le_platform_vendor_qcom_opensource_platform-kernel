@@ -401,7 +401,7 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 		}
 
 		map->attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
-		map->table = dma_buf_map_attachment(map->attach,
+		map->table = dma_buf_map_attachment_unlocked(map->attach,
 							DMA_BIDIRECTIONAL);
 		if (IS_ERR(map->table)) {
 			RPC_ERR("failed to get sg table of dma buf\n");
@@ -433,7 +433,7 @@ int fastrpc_map_create(struct fastrpc_user *fl, int fd,
 
 	return 0;
 smmu_map_err:
-	dma_buf_unmap_attachment(map->attach, map->table,
+	dma_buf_unmap_attachment_unlocked(map->attach, map->table,
 			DMA_BIDIRECTIONAL);
 map_err:
 	dma_buf_detach(map->buf, map->attach);
@@ -465,7 +465,7 @@ void fastrpc_free_map(struct fastrpc_map *map)
 		virt_smmu_unmap(fl, map->da);
 
 	if (map->table) {
-		dma_buf_unmap_attachment(map->attach, map->table,
+		dma_buf_unmap_attachment_unlocked(map->attach, map->table,
 						DMA_BIDIRECTIONAL);
 		dma_buf_detach(map->buf, map->attach);
 		dma_buf_put(map->buf);

@@ -3,8 +3,9 @@
 LINUXINCLUDE += \
 		-I$(VRPC_ROOT)/include/uapi/
 
-hfastrpc-objs := dsp/hybrid_fastrpc_vdev.o \
+hfastrpc-objs := dsp/virtio_fastrpc.o \
 		 dsp/fastrpc_rpmsg.o \
+		 dsp/fastrpc_glinkpkt.o \
 		 dsp/fastrpc_core.o \
 		 dsp/fastrpc_ioctl.o \
 		 dsp/fastrpc_mem.o \

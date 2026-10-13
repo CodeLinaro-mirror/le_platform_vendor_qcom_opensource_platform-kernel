@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __FASTRPC_CORE_H__
@@ -23,4 +23,6 @@ int fastrpc_req_munmap(struct fastrpc_user *fl, char __user *argp);
 int fastrpc_req_mem_map(struct fastrpc_user *fl, char __user *argp);
 int fastrpc_req_mem_unmap(struct fastrpc_user *fl, char __user *argp);
 void fastrpc_queue_pd_status(struct fastrpc_user *fl, int domain, int status, int sessionid);
+void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
+				u32 rsp_flags, u32 early_wake_time);
 #endif /*__FASTRPC_CORE_H__*/

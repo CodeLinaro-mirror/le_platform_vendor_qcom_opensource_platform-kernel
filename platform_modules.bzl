@@ -177,9 +177,10 @@ register_platform_kernel_module(
     name = "hfastrpc",
     path = DSP_PATH,
     default_srcs = [
-        "hybrid_fastrpc_vdev.c",
+        "virtio_fastrpc.c",
         "fastrpc_core.c",
         "fastrpc_rpmsg.c",
+        "fastrpc_glinkpkt.c",
         "fastrpc_ioctl.c",
         "fastrpc_mem.c",
         "fastrpc_vq.c",
