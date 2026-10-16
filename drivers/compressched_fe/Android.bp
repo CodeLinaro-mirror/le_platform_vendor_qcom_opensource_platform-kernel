@@ -1,0 +1,25 @@
+// =============================================================================
+//  Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+//  All rights reserved.
+//  Confidential and Proprietary - Qualcomm Technologies, Inc.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// Kernel UAPI header library: compressched_fe_kernel_headers
+//
+// Exports the UAPI ioctl header (uapi/compressched_fe_ioctl.h) to userspace
+// consumers.  Any module that needs to call ioctls on /dev/compressched_fe
+// should add this to its header_libs:
+//
+//   header_libs: ["compressched_fe_kernel_headers"],
+//
+// The header is then available as:
+//   #include "compressched_fe_ioctl.h"
+// or
+//   #include <compressched_fe_ioctl.h>
+// -----------------------------------------------------------------------------
+cc_library_headers {
+    name: "compressched_fe_kernel_headers",
+    vendor: true,
+    export_include_dirs: ["uapi"],
+}

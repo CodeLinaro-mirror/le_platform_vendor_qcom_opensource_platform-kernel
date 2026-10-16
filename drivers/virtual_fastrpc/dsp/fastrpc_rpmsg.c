@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  * Copyright (c) 2018, Linaro Limited
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
@@ -11,11 +11,6 @@
 
 #include "fastrpc_common.h"
 #include "fastrpc_core.h"
-
-struct fastrpc_channel_ctx* get_current_channel_ctx(struct device *dev)
-{
-	return dev_get_drvdata(dev->parent);
-}
 
 /*
  * Retrieves legacy information for a given fastrpc_domain.
@@ -303,7 +298,7 @@ static struct rpmsg_driver fastrpc_driver = {
 	},
 };
 
-int fastrpc_transport_send(struct fastrpc_channel_ctx *cctx,
+int fastrpc_transport_rpmsg_send(struct fastrpc_channel_ctx *cctx,
 				void *rpc_msg, uint32_t rpc_msg_size)
 {
 	int err = 0;
@@ -315,7 +310,7 @@ int fastrpc_transport_send(struct fastrpc_channel_ctx *cctx,
 	return err;
 }
 
-int fastrpc_transport_init(void)
+int fastrpc_transport_rpmsg_init(void)
 {
 	int ret;
 
@@ -328,7 +323,7 @@ int fastrpc_transport_init(void)
 	return 0;
 }
 
-void fastrpc_transport_deinit(void)
+void fastrpc_transport_rpmsg_deinit(void)
 {
 	unregister_rpmsg_driver(&fastrpc_driver);
 }

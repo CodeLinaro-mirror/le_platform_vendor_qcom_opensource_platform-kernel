@@ -11,6 +11,14 @@ ddk_headers(
 )
 
 ddk_headers(
+    name = "compressched_fe_uapi_headers",
+    hdrs = glob([
+        "drivers/compressched_fe/uapi/*.h",
+    ]),
+    includes = ["drivers/compressched_fe"],  # allows #include "uapi/compressched_fe_ioctl.h"
+)
+
+ddk_headers(
     name = "boot_marker_headers",
     hdrs = glob([
         "include/soc/qcom/boot_marker.h",

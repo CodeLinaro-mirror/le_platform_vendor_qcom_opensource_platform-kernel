@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  * Copyright (c) 2018, Linaro Limited
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #include <linux/delay.h>
 #include <linux/sort.h>
@@ -283,6 +283,8 @@ struct virt_mdctx_manage_msg {
 	s32 cid[];
 } __packed;
 
+static void fastrpc_user_release(struct kref *ref);
+
 static int fastrpc_mem_map_to_dsp(struct fastrpc_user *fl, int fd, int offset,
 					u32 flags, u32 va, u64 da,
 					size_t size, uintptr_t *raddr);
@@ -360,6 +362,53 @@ void fastrpc_channel_update_invoke_cnt(
 	} else {
 		atomic_dec(&cctx->invoke_cnt);
 	}
+}
+
+int fastrpc_file_get(struct fastrpc_user *fl)
+{
+	return kref_get_unless_zero(&fl->refcount) ? 0 : -ENOENT;
+}
+
+void fastrpc_file_put(struct fastrpc_user *fl, bool worker)
+{
+	/*
+	 * worker=true is used when called from interrupt context (e.g.
+	 * fastrpc_rpmsg_callback). If the refcount would drop to zero here,
+	 * the release function fastrpc_user_release must not be invoked
+	 * directly from interrupt context as it performs cleanup that
+	 * requires process context. Schedule a worker instead.
+	 */
+	if (worker) {
+		struct kref *kref = &fl->refcount;
+		u32 old, new, val = atomic_read(&kref->refcount.refs);
+
+		if (val > 1 && likely(val != UINT_MAX)) {
+			for (;;) {
+				new = val - 1;
+				if (val == 1)
+					goto schedule_work;
+				old = atomic_cmpxchg_release(&kref->refcount.refs, val, new);
+				if (old == val)
+					break;
+				val = old;
+			}
+		} else if (val == 1) {
+			goto schedule_work;
+		}
+	} else {
+		kref_put(&fl->refcount, fastrpc_user_release);
+	}
+	return;
+schedule_work:
+	schedule_work(&fl->put_work);
+}
+
+static void fastrpc_file_put_worker(struct work_struct *work)
+{
+	struct fastrpc_user *fl =
+			container_of(work, struct fastrpc_user, put_work);
+
+	fastrpc_file_put(fl, false);
 }
 
 static void fastrpc_context_free(struct kref *ref)
@@ -457,6 +506,16 @@ void fastrpc_free_user(struct fastrpc_user *fl)
 
 	fastrpc_buf_list_free(fl, &fl->mmaps, false);
 
+	if (fl->pers_hdr_buf) {
+		fastrpc_buf_free(fl->pers_hdr_buf, false);
+		fl->pers_hdr_buf = NULL;
+	}
+
+        if (fl->hdr_bufs) {
+		kfree(fl->hdr_bufs);
+		fl->hdr_bufs = NULL;
+	}
+
 	fastrpc_buf_list_free(fl, &fl->cached_bufs, true);
 
 	/* Iterate thru all multidomain contexts of user and destroy each one */
@@ -492,6 +551,7 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 	struct fastrpc_user *fl ;
 	unsigned long irq_flags = 0;
 	bool process_found = false;
+	int err;
 
 	DSPSIGNAL_VERBOSE("received queue signal %llx: PID %u, signal %u\n",
 			msg, pid, signal_id);
@@ -502,6 +562,11 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 	spin_lock_irqsave(&cctx->lock, irq_flags);
 	list_for_each_entry(fl, &cctx->users, user) {
 		if (fl->upid == pid && fl->state < DSP_EXIT_START) {
+			err = fastrpc_file_get(fl);
+			if (err) {
+				RPC_WARN("user-obj for fl (%pK) being released\n", fl);
+				break;
+			}
 			process_found = true;
 			break;
 		}
@@ -533,6 +598,7 @@ static void fastrpc_handle_signal_rpmsg(uint64_t msg,
 				signal_id, pid);
 	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, irq_flags);
+	fastrpc_file_put(fl, true);
 
 	return;
 }
@@ -566,10 +632,16 @@ static void fastrpc_notif_find_process(int domain,
 	bool is_process_found = false;
 	unsigned long irq_flags = 0;
 	struct fastrpc_user *user;
+	int err;
 
 	spin_lock_irqsave(&cctx->lock, irq_flags);
 	list_for_each_entry(user, &cctx->users, user) {
 		if (user->upid == notif->pid) {
+			err = fastrpc_file_get(user);
+			if (err) {
+				RPC_WARN("user-obj for fl (%pK) being released\n", user);
+				break;
+			}
 			is_process_found = true;
 			break;
 		}
@@ -581,9 +653,10 @@ static void fastrpc_notif_find_process(int domain,
 		return;
 	}
 	fastrpc_queue_pd_status(user, domain, notif->status, user->sessionid);
+	fastrpc_file_put(user, true);
 }
 
-static void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
+void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
 					u32 rsp_flags, u32 early_wake_time)
 {
 	ctx->retval = retval;
@@ -615,6 +688,11 @@ int fastrpc_handle_rpc_response(struct fastrpc_channel_ctx *cctx,
 	unsigned long flags = 0, idr = 0;
 	u64 ctxid = 0;
 	u32 rsp_flags = 0, early_wake_time = 0, version = 0;
+
+	if (!data) {
+		RPC_ERR("rpc response data is NULL\n");
+		return -EINVAL;
+	}
 
 	if (len == sizeof(uint64_t)) {
 		fastrpc_handle_signal_rpmsg(*((uint64_t *)data), cctx);
@@ -980,10 +1058,15 @@ static int fastrpc_debugfs_show(struct seq_file *s_file, void *data)
 	struct fastrpc_channel_ctx *ctx;
 	struct fastrpc_invoke_ctx *ictx, *m;
 	struct fastrpc_buf *buf, *n;
-	int i;
+	int i, ret;
 	unsigned long irq_flags = 0;
 
 	if (fl != NULL) {
+		ret = fastrpc_file_get(fl);
+		if (ret)
+			/* User object being released as ref-count is already 0 */
+			return 0;
+
 		seq_printf(s_file, "%s %12s %d\n", "tgid", ":", fl->tgid);
 		seq_printf(s_file, "%s %7s %d\n", "tgid_frpc", ":", fl->tgid_frpc);
 		seq_printf(s_file, "%s %3s %d\n", "is_secure_dev", ":", fl->is_secure_dev);
@@ -1032,6 +1115,7 @@ static int fastrpc_debugfs_show(struct seq_file *s_file, void *data)
 				print_ictx_info(s_file, ictx);
 		}
 		spin_unlock(&fl->lock);
+		fastrpc_file_put(fl, false);
 	}
 	return 0;
 }
@@ -1132,39 +1216,62 @@ static int olaps_cmp(const void *a, const void *b)
 	return st == 0 ? ed : st;
 }
 
-static void fastrpc_get_buff_overlaps(struct fastrpc_invoke_ctx *ctx)
+/**
+ * fastrpc_get_buff_overlaps - Detect and handle buffer overlaps in RPC args
+ * @ctx: The invoke context containing buffer information
+ *
+ * This function detects overlapping memory regions in the RPC arguments and
+ * adjusts the memory mapping accordingly. It handles ION and non-ION buffers
+ * separately to prevent incorrect overlap detection between different buf types.
+ * For each buffer type:
+ * - If a buffer overlaps with a previous buffer of the same type, it adjusts
+ *   the mapping to avoid the overlap
+ * - If no overlap is detected, it uses the full buffer range
+ *
+ * Return: 0 on success, error code on failure
+ */
+static int fastrpc_get_buff_overlaps(struct fastrpc_invoke_ctx *ctx)
 {
-	u64 max_end = 0;
+	u64 ion_buf_end_pos = 0, non_ion_buf_end_pos = 0;
 	int i;
-
+	struct device *dev = ctx->fl->cctx->dev;
 	for (i = 0; i < ctx->nbufs; ++i) {
 		ctx->olaps[i].start = ctx->args[i].ptr;
+		/* Check the overflow for user buffer */
+		if (ctx->olaps[i].start > (ULLONG_MAX - ctx->args[i].length)) {
+			dev_dbg(dev,
+				"user passed invalid non ion buffer addr 0x%llx, size %llx\n",
+				ctx->args[i].ptr, ctx->args[i].length);
+			return -EFAULT;
+		}
 		ctx->olaps[i].end = ctx->olaps[i].start + ctx->args[i].length;
 		ctx->olaps[i].raix = i;
 	}
-
 	sort(ctx->olaps, ctx->nbufs, sizeof(*ctx->olaps), olaps_cmp, NULL);
-
 	for (i = 0; i < ctx->nbufs; ++i) {
-		if (ctx->olaps[i].start < max_end) {
-			ctx->olaps[i].mstart = max_end;
+		/* Separate ION and non-ION buffers; fd <= 0 indicates non-ION */
+		u64 *last_buf_end = (ctx->args[ctx->olaps[i].raix].fd <= 0) ?
+				&non_ion_buf_end_pos : &ion_buf_end_pos;
+		if (ctx->olaps[i].start < *last_buf_end) {
+			/* Overlap detected within same buffer type */
+			ctx->olaps[i].mstart = *last_buf_end;
 			ctx->olaps[i].mend = ctx->olaps[i].end;
-			ctx->olaps[i].offset = max_end - ctx->olaps[i].start;
-
-			if (ctx->olaps[i].end > max_end) {
-				max_end = ctx->olaps[i].end;
+			ctx->olaps[i].offset = *last_buf_end - ctx->olaps[i].start;
+			if (ctx->olaps[i].end > *last_buf_end) {
+				*last_buf_end = ctx->olaps[i].end;
 			} else {
 				ctx->olaps[i].mend = 0;
 				ctx->olaps[i].mstart = 0;
 			}
-
 		} else  {
+			/* No overlap, assign full range */
 			ctx->olaps[i].mend = ctx->olaps[i].end;
 			ctx->olaps[i].mstart = ctx->olaps[i].start;
 			ctx->olaps[i].offset = 0;
-			max_end = ctx->olaps[i].end;
+			*last_buf_end = ctx->olaps[i].end;
 		}
 	}
+	return 0;
 }
 
 static struct fastrpc_invoke_ctx *fastrpc_context_alloc(struct fastrpc_user *fl,
@@ -1615,6 +1722,7 @@ static int fastrpc_invoke_send(struct fastrpc_invoke_ctx *ctx,
 	struct fastrpc_channel_ctx *cctx;
 	struct fastrpc_user *fl = ctx->fl;
 	struct fastrpc_msg *msg = &ctx->msg;
+	struct glink_pkt_msg pkt;
 	int ret;
 
 	cctx = fl->cctx;
@@ -1631,7 +1739,17 @@ static int fastrpc_invoke_send(struct fastrpc_invoke_ctx *ctx,
 	msg->addr = ctx->buf ? ctx->buf->da : 0;
 	msg->size = roundup(ctx->msg_sz, PAGE_SIZE);
 
-	ret = fastrpc_transport_send(cctx, (void *)msg, sizeof(*msg));
+	if (cctx->gdriver->has_hybrid == true) {
+		ret = fastrpc_transport_rpmsg_send(cctx, (void *)msg, sizeof(*msg));
+	} else if (cctx->gdriver->has_glink_pkt == true) {
+		pkt.fl= fl;
+		pkt.data = msg;
+		pkt.ctx = ctx;
+		ret = fastrpc_transport_glinkpkt_send(cctx, (void *)&pkt, sizeof(*msg));
+	} else {
+		RPC_ERR("transport layer is not ready\n");
+		ret = -EPIPE;
+	}
 
 	return ret;
 }
@@ -2011,16 +2129,16 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 		/* RSM case */
 		RPC_DBG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
 						rsm_dspsignal_msg.target_id, fl->upid, fsig->signal_id);
-		err = fastrpc_transport_send(cctx, (void *)&rsm_dspsignal_msg,
+		err = fastrpc_transport_rpmsg_send(cctx, (void *)&rsm_dspsignal_msg,
 						sizeof(hfastrpc_rsm_dspsignal_msg));
 	} else {
 		/* non-RSM case */
 		RPC_DBG("dspsignal msg sent, upid %d, signal_id %u\n",
 						fl->upid, fsig->signal_id);
-		err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
+		err = fastrpc_transport_rpmsg_send(cctx, (void *)&msg, sizeof(msg));
 	}
 #else
-	err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
+	err = fastrpc_transport_rpmsg_send(cctx, (void *)&msg, sizeof(msg));
 #endif
 	return err;
 }
@@ -2059,7 +2177,7 @@ static int fastrpc_dspsignal_signal_mc(struct fastrpc_user *fl,
 	/* RSM case */
 	RPC_DBG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
 					rsm_dspsignal_msg.target_id, fl->upid, fmcsig->signal_id);
-	err = fastrpc_transport_send(cctx, (void *)&rsm_dspsignal_msg,
+	err = fastrpc_transport_rpmsg_send(cctx, (void *)&rsm_dspsignal_msg,
 					sizeof(hfastrpc_rsm_dspsignal_msg));
 
 	return err;
@@ -2952,6 +3070,8 @@ bail:
 		kfree(mdctx->cids);
 		kfree(mdctx->session_ids);
 		kfree(mdctx->domains);
+		kfree(mdctx->upids);
+		kfree(mdctx->fls);
 		kfree(mdctx);
 	}
 	mutex_unlock(gmut);
@@ -3054,6 +3174,8 @@ static int fastrpc_multidomain_ctx_cleanup(struct fastrpc_user *fl,
 	kfree(mdctx->cids);
 	kfree(mdctx->session_ids);
 	kfree(mdctx->domains);
+	kfree(mdctx->upids);
+	kfree(mdctx->fls);
 	kfree(mdctx);
 bail:
 	mutex_unlock(gmut);
@@ -3664,6 +3786,8 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 	INIT_LIST_HEAD(&fl->cached_bufs);
 	INIT_LIST_HEAD(&fl->notif_queue);
 	INIT_LIST_HEAD(&fl->mdctxs);
+	kref_init(&fl->refcount);
+	INIT_WORK(&fl->put_work, fastrpc_file_put_worker);
 	init_waitqueue_head(&fl->proc_state_notif.notif_wait_queue);
 	spin_lock_init(&fl->proc_state_notif.nqlock);
 #if IS_ENABLED(CONFIG_HYBRID_FASTRPC_RSM)
@@ -3800,25 +3924,42 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
 	 * to be freed here. And kfree will do sanity check on NULL pointer.
 	 * */
 	spin_lock_irqsave(&fl->dspsignals_lock, flags);
-	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS / FASTRPC_DSPSIGNAL_GROUP_SIZE); i++)
+	for (i = 0; i < (FASTRPC_DSPSIGNAL_NUM_SIGNALS / FASTRPC_DSPSIGNAL_GROUP_SIZE); i++) {
 		kfree(fl->signal_groups[i]);
+		fl->signal_groups[i] = NULL;
+	}
 	spin_unlock_irqrestore(&fl->dspsignals_lock, flags);
 
-	fastrpc_free_user(fl);
 #ifdef CONFIG_DEBUG_FS
 	debugfs_remove(fl->debugfs_file);
 #endif
+	fastrpc_free_user(fl);
 	mutex_destroy(&fl->signal_create_mutex);
 	mutex_destroy(&fl->remote_map_mutex);
 	mutex_destroy(&fl->map_mutex);
-	kfree(fl);
 
-	fastrpc_channel_update_invoke_cnt(cctx, false);
-
-	fastrpc_channel_ctx_put(cctx);
+	fastrpc_file_put(fl, false);
 	file->private_data = NULL;
 
 	return 0;
+}
+
+/*
+ * Only the final memory deallocation is deferred here. All substantive
+ * cleanup (virt_fastrpc_close, list removal, buffer/map freeing) is done
+ * synchronously in fastrpc_device_release, which runs in the caller's
+ * process context. This is intentional: virt_fastrpc_close can block
+ * waiting for a backend response, and blocking the caller's close()
+ * syscall is preferable to hanging a shared kworker thread that may be
+ * reached when this callback is triggered from interrupt context.
+ */
+static void fastrpc_user_release(struct kref *ref)
+{
+	struct fastrpc_user *fl = container_of(ref, struct fastrpc_user, refcount);
+	struct fastrpc_channel_ctx *cctx = fl->cctx;
+
+	kfree(fl);
+	fastrpc_channel_ctx_put(cctx);
 }
 
 static const struct file_operations fastrpc_fops = {
