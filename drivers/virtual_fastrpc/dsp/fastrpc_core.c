@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
-/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0
+ * Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
  * Copyright (c) 2018, Linaro Limited
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #include <linux/delay.h>
 #include <linux/sort.h>
@@ -457,6 +457,16 @@ void fastrpc_free_user(struct fastrpc_user *fl)
 
 	fastrpc_buf_list_free(fl, &fl->mmaps, false);
 
+	if (fl->pers_hdr_buf) {
+		fastrpc_buf_free(fl->pers_hdr_buf, false);
+		fl->pers_hdr_buf = NULL;
+	}
+
+        if (fl->hdr_bufs) {
+		kfree(fl->hdr_bufs);
+		fl->hdr_bufs = NULL;
+	}
+
 	fastrpc_buf_list_free(fl, &fl->cached_bufs, true);
 
 	/* Iterate thru all multidomain contexts of user and destroy each one */
@@ -583,7 +593,7 @@ static void fastrpc_notif_find_process(int domain,
 	fastrpc_queue_pd_status(user, domain, notif->status, user->sessionid);
 }
 
-static void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
+void fastrpc_notify_user_ctx(struct fastrpc_invoke_ctx *ctx, int retval,
 					u32 rsp_flags, u32 early_wake_time)
 {
 	ctx->retval = retval;
@@ -1132,39 +1142,62 @@ static int olaps_cmp(const void *a, const void *b)
 	return st == 0 ? ed : st;
 }
 
-static void fastrpc_get_buff_overlaps(struct fastrpc_invoke_ctx *ctx)
+/**
+ * fastrpc_get_buff_overlaps - Detect and handle buffer overlaps in RPC args
+ * @ctx: The invoke context containing buffer information
+ *
+ * This function detects overlapping memory regions in the RPC arguments and
+ * adjusts the memory mapping accordingly. It handles ION and non-ION buffers
+ * separately to prevent incorrect overlap detection between different buf types.
+ * For each buffer type:
+ * - If a buffer overlaps with a previous buffer of the same type, it adjusts
+ *   the mapping to avoid the overlap
+ * - If no overlap is detected, it uses the full buffer range
+ *
+ * Return: 0 on success, error code on failure
+ */
+static int fastrpc_get_buff_overlaps(struct fastrpc_invoke_ctx *ctx)
 {
-	u64 max_end = 0;
+	u64 ion_buf_end_pos = 0, non_ion_buf_end_pos = 0;
 	int i;
-
+	struct device *dev = ctx->fl->cctx->dev;
 	for (i = 0; i < ctx->nbufs; ++i) {
 		ctx->olaps[i].start = ctx->args[i].ptr;
+		/* Check the overflow for user buffer */
+		if (ctx->olaps[i].start > (ULLONG_MAX - ctx->args[i].length)) {
+			dev_dbg(dev,
+				"user passed invalid non ion buffer addr 0x%llx, size %llx\n",
+				ctx->args[i].ptr, ctx->args[i].length);
+			return -EFAULT;
+		}
 		ctx->olaps[i].end = ctx->olaps[i].start + ctx->args[i].length;
 		ctx->olaps[i].raix = i;
 	}
-
 	sort(ctx->olaps, ctx->nbufs, sizeof(*ctx->olaps), olaps_cmp, NULL);
-
 	for (i = 0; i < ctx->nbufs; ++i) {
-		if (ctx->olaps[i].start < max_end) {
-			ctx->olaps[i].mstart = max_end;
+		/* Separate ION and non-ION buffers; fd <= 0 indicates non-ION */
+		u64 *last_buf_end = (ctx->args[ctx->olaps[i].raix].fd <= 0) ?
+				&non_ion_buf_end_pos : &ion_buf_end_pos;
+		if (ctx->olaps[i].start < *last_buf_end) {
+			/* Overlap detected within same buffer type */
+			ctx->olaps[i].mstart = *last_buf_end;
 			ctx->olaps[i].mend = ctx->olaps[i].end;
-			ctx->olaps[i].offset = max_end - ctx->olaps[i].start;
-
-			if (ctx->olaps[i].end > max_end) {
-				max_end = ctx->olaps[i].end;
+			ctx->olaps[i].offset = *last_buf_end - ctx->olaps[i].start;
+			if (ctx->olaps[i].end > *last_buf_end) {
+				*last_buf_end = ctx->olaps[i].end;
 			} else {
 				ctx->olaps[i].mend = 0;
 				ctx->olaps[i].mstart = 0;
 			}
-
 		} else  {
+			/* No overlap, assign full range */
 			ctx->olaps[i].mend = ctx->olaps[i].end;
 			ctx->olaps[i].mstart = ctx->olaps[i].start;
 			ctx->olaps[i].offset = 0;
-			max_end = ctx->olaps[i].end;
+			*last_buf_end = ctx->olaps[i].end;
 		}
 	}
+	return 0;
 }
 
 static struct fastrpc_invoke_ctx *fastrpc_context_alloc(struct fastrpc_user *fl,
@@ -1615,6 +1648,7 @@ static int fastrpc_invoke_send(struct fastrpc_invoke_ctx *ctx,
 	struct fastrpc_channel_ctx *cctx;
 	struct fastrpc_user *fl = ctx->fl;
 	struct fastrpc_msg *msg = &ctx->msg;
+	struct glink_pkt_msg pkt;
 	int ret;
 
 	cctx = fl->cctx;
@@ -1631,7 +1665,17 @@ static int fastrpc_invoke_send(struct fastrpc_invoke_ctx *ctx,
 	msg->addr = ctx->buf ? ctx->buf->da : 0;
 	msg->size = roundup(ctx->msg_sz, PAGE_SIZE);
 
-	ret = fastrpc_transport_send(cctx, (void *)msg, sizeof(*msg));
+	if (cctx->gdriver->has_hybrid == true) {
+		ret = fastrpc_transport_rpmsg_send(cctx, (void *)msg, sizeof(*msg));
+	} else if (cctx->gdriver->has_glink_pkt == true) {
+		pkt.fl= fl;
+		pkt.data = msg;
+		pkt.ctx = ctx;
+		ret = fastrpc_transport_glinkpkt_send(cctx, (void *)&pkt, sizeof(*msg));
+	} else {
+		RPC_ERR("transport layer is not ready\n");
+		ret = -EPIPE;
+	}
 
 	return ret;
 }
@@ -2011,16 +2055,16 @@ static int fastrpc_dspsignal_signal(struct fastrpc_user *fl,
 		/* RSM case */
 		RPC_DBG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
 						rsm_dspsignal_msg.target_id, fl->upid, fsig->signal_id);
-		err = fastrpc_transport_send(cctx, (void *)&rsm_dspsignal_msg,
+		err = fastrpc_transport_rpmsg_send(cctx, (void *)&rsm_dspsignal_msg,
 						sizeof(hfastrpc_rsm_dspsignal_msg));
 	} else {
 		/* non-RSM case */
 		RPC_DBG("dspsignal msg sent, upid %d, signal_id %u\n",
 						fl->upid, fsig->signal_id);
-		err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
+		err = fastrpc_transport_rpmsg_send(cctx, (void *)&msg, sizeof(msg));
 	}
 #else
-	err = fastrpc_transport_send(cctx, (void *)&msg, sizeof(msg));
+	err = fastrpc_transport_rpmsg_send(cctx, (void *)&msg, sizeof(msg));
 #endif
 	return err;
 }
@@ -2059,7 +2103,7 @@ static int fastrpc_dspsignal_signal_mc(struct fastrpc_user *fl,
 	/* RSM case */
 	RPC_DBG("rsm_dspsignal_msg sent, target_id %llu, upid %d, signal_id %u",
 					rsm_dspsignal_msg.target_id, fl->upid, fmcsig->signal_id);
-	err = fastrpc_transport_send(cctx, (void *)&rsm_dspsignal_msg,
+	err = fastrpc_transport_rpmsg_send(cctx, (void *)&rsm_dspsignal_msg,
 					sizeof(hfastrpc_rsm_dspsignal_msg));
 
 	return err;

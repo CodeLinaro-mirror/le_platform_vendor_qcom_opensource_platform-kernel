@@ -1,8 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
- * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+/* SPDX-License-Identifier: GPL-2.0-only
+ *
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
-
 #include <linux/debugfs.h>
 #include <linux/interrupt.h>
 #include <linux/list.h>
@@ -34,9 +33,9 @@
 #define VIRTIO_FASTRPC_F_VQUEUE_SETTING			7
 /* indicates fastrpc_mmap/fastrpc_munmap is supported */
 #define VIRTIO_FASTRPC_F_MEM_MAP			8
-/* indicates fastrpc_mmap/fastrpc_munmap is supported */
+/* indicates hybrid fastrpc is supported */
 #define VIRTIO_FASTRPC_F_HYBRID				9
-
+/* indicates device discovery is supported */
 #define VIRTIO_FASTRPC_F_DEVICE_DISCOVERY		11
 
 /*
@@ -48,6 +47,8 @@
 
 /* indicates rsm/compressched is supported */
 #define VIRTIO_FASTRPC_F_RSM				13
+/* indicates virtio-glink-pkt fastrpc is supported */
+#define VIRTIO_FASTRPC_F_GLINK_PKT			14
 
 #define MAX_FASTRPC_BUF_SIZE		(1024*1024*4)
 #define DEF_FASTRPC_BUF_SIZE		(128*1024)
@@ -96,7 +97,7 @@
  * need to be matched with BE_MINOR_VER. And it will return to 0 when
  * FE_MAJOR_VER is increased.
  */
-#define FE_MINOR_VER 0x7
+#define FE_MINOR_VER 0x8
 #define FE_VERSION (FE_MAJOR_VER << 16 | FE_MINOR_VER)
 #define BE_MAJOR_VER(ver) (((ver) >> 16) & 0xffff)
 
@@ -581,8 +582,15 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 	if (!virtio_has_feature(vdev, VIRTIO_F_VERSION_1))
 		return -ENODEV;
 
-	if (!virtio_has_feature(vdev, VIRTIO_FASTRPC_F_HYBRID)) {
-		RPC_ERR("hybrid fastrpc can't work with legacy virtio fastrpc\n");
+	memset(gdriver, 0, sizeof(*gdriver));
+	if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_HYBRID)) {
+		RPC_INFO("hybrid fastrpc support\n");
+		gdriver->has_hybrid = true;
+	} else if (virtio_has_feature(vdev, VIRTIO_FASTRPC_F_GLINK_PKT)){
+		gdriver->has_glink_pkt = true;
+		RPC_INFO("virtio glinkpkt fastrpc support\n");
+	} else {
+		RPC_ERR("legacy virtio fastrpc is not supported\n");
 		return -ENODEV;
 	}
 
@@ -595,10 +603,9 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 			return -ENODEV;
 		}
 	}
-	RPC_INFO("hybrid fastrpc version 0x%x:0x%x\n",
+	RPC_INFO("fastrpc version 0x%x:0x%x\n",
 			FE_VERSION, config.version);
 
-	memset(gdriver, 0, sizeof(*gdriver));
 	spin_lock_init(&gdriver->msglock);
 	spin_lock_init(&gdriver->glock);
 	mutex_init(&gdriver->gmut);
@@ -675,9 +682,13 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 		return err;
 	}
 
-	err = fastrpc_transport_init();
+	if (gdriver->has_hybrid == true)
+		err = fastrpc_transport_rpmsg_init();
+	else
+		err = fastrpc_transport_glinkpkt_init();
 	if (err) {
-		RPC_ERR("fastrpc: failed to register rpmsg driver\n");
+		RPC_ERR("fastrpc: failed to init transport %s driver\n",
+				gdriver->has_hybrid ? "rpmsg" : "glinkpkt");
 		goto bail;
 	}
 
@@ -709,7 +720,7 @@ static int hfastrpc_probe(struct virtio_device *vdev)
 	virtqueue_enable_cb(gdriver->rvq.vq);
 	virtqueue_kick(gdriver->rvq.vq);
 
-	RPC_INFO("Registered hybrid fastrpc device\n");
+	RPC_INFO("Registered fastrpc device\n");
 	return 0;
 bail:
 	vdev->config->del_vqs(vdev);
@@ -732,7 +743,10 @@ static void hfastrpc_remove(struct virtio_device *vdev)
 	}
 
 	mutex_destroy(&gdriver->gmut);
-	fastrpc_transport_deinit();
+	if (gdriver->has_hybrid == true)
+		fastrpc_transport_rpmsg_deinit();
+	else
+		fastrpc_transport_glinkpkt_deinit();
 	vdev->config->reset(vdev);
 	vdev->config->del_vqs(vdev);
 
@@ -757,6 +771,7 @@ static unsigned int features[] = {
 	VIRTIO_FASTRPC_F_HYBRID,
 	VIRTIO_FASTRPC_F_DEVICE_DISCOVERY,
 	VIRTIO_FASTRPC_F_RSM,
+	VIRTIO_FASTRPC_F_GLINK_PKT,
 };
 
 static struct virtio_driver hybrid_fastrpc_driver = {
